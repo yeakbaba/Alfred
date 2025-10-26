@@ -7,4 +7,6 @@
  */
 export default {
   API_URL: "https://api.rss2json.com/v1/",
+  supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
+  supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
 }

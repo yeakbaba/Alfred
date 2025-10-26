@@ -1,6 +1,6 @@
 {
-  "name": "AlfredApp",
-  "slug": "AlfredApp",
+  "name": "Alfred",
+  "slug": "Alfred",
   "scheme": "alfredapp",
   "version": "1.0.0",
   "orientation": "portrait",
@@ -16,7 +16,7 @@
   ],
   "android": {
     "icon": "./assets/images/app-icon-android-legacy.png",
-    "package": "com.alfredapp",
+    "package": "com.mosaic.alfredapp",
     "adaptiveIcon": {
       "foregroundImage": "./assets/images/app-icon-android-adaptive-foreground.png",
       "backgroundImage": "./assets/images/app-icon-android-adaptive-background.png"
@@ -27,7 +27,7 @@
   "ios": {
     "icon": "./assets/images/app-icon-ios.png",
     "supportsTablet": true,
-    "bundleIdentifier": "com.alfredapp"
+    "bundleIdentifier": "com.mosaic.alfredapp"
   },
   "web": {
     "favicon": "./assets/images/app-icon-web-favicon.png",

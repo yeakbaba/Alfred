@@ -64,6 +64,9 @@ export const initI18n = async () => {
 
 export type TxKeyPath = RecursiveKeyOf<Translations>
 
+// Export the translate function
+export { translate } from "./translate"
+
 // via: https://stackoverflow.com/a/65333050
 type RecursiveKeyOf<TObj extends object> = {
   [TKey in keyof TObj & (string | number)]: RecursiveKeyOfHandleValue<TObj[TKey], `${TKey}`, true>

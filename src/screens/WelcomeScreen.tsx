@@ -1,8 +1,12 @@
 import { FC } from "react"
-import { Image, ImageStyle, TextStyle, View, ViewStyle } from "react-native"
+import { Alert, Image, ImageStyle, TextStyle, View, ViewStyle } from "react-native"
+import { useRouter } from "expo-router"
 
+import { Button } from "@/components/Button"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
+import { useAuth } from "@/hooks/useAuth"
+import { useSupabase } from "@/hooks/useSupabase"
 import { isRTL } from "@/i18n"
 import { useAppTheme } from "@/theme/context"
 import { $styles } from "@/theme/styles"
@@ -13,9 +17,29 @@ const welcomeLogo = require("@assets/images/logo.png")
 const welcomeFace = require("@assets/images/welcome-face.png")
 
 export const WelcomeScreen: FC = function WelcomeScreen() {
+  const router = useRouter()
   const { themed, theme } = useAppTheme()
+  const { user } = useAuth()
+  const { signOut, isLoading } = useSupabase()
 
   const $bottomContainerInsets = useSafeAreaInsetsStyle(["bottom"])
+
+  const handleSignOut = async () => {
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: async () => {
+          await signOut()
+          router.replace("/(auth)/login")
+        },
+      },
+    ])
+  }
 
   return (
     <Screen preset="fixed" contentContainerStyle={$styles.flex1}>
@@ -28,6 +52,15 @@ export const WelcomeScreen: FC = function WelcomeScreen() {
           preset="heading"
         />
         <Text tx="welcomeScreen:exciting" preset="subheading" />
+
+        {user?.email && (
+          <Text
+            text={`Signed in as: ${user.email}`}
+            style={themed($userEmail)}
+            size="sm"
+          />
+        )}
+
         <Image
           style={$welcomeFace}
           source={welcomeFace}
@@ -38,6 +71,13 @@ export const WelcomeScreen: FC = function WelcomeScreen() {
 
       <View style={themed([$bottomContainer, $bottomContainerInsets])}>
         <Text tx="welcomeScreen:postscript" size="md" />
+        <Button
+          text="Sign Out"
+          preset="default"
+          style={themed($signOutButton)}
+          onPress={handleSignOut}
+          disabled={isLoading}
+        />
       </View>
     </Screen>
   )
@@ -79,4 +119,14 @@ const $welcomeFace: ImageStyle = {
 
 const $welcomeHeading: ThemedStyle<TextStyle> = ({ spacing }) => ({
   marginBottom: spacing.md,
+})
+
+const $userEmail: ThemedStyle<TextStyle> = ({ spacing, colors }) => ({
+  marginTop: spacing.md,
+  textAlign: "center",
+  color: colors.textDim,
+})
+
+const $signOutButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginTop: spacing.md,
 })
