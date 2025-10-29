@@ -212,6 +212,28 @@ const en = {
       required: "This relationship type requires additional information",
     },
   },
+  agents: {
+    alfred: {
+      name: "Alfred",
+      description: "Home & Family Planner",
+    },
+    max: {
+      name: "Max",
+      description: "Sports Companion",
+    },
+    alice: {
+      name: "Alice",
+      description: "Family Health Companion",
+    },
+    wes: {
+      name: "Wes",
+      description: "Entertainment Curator",
+    },
+    rosa: {
+      name: "Rosa",
+      description: "Food & Lifestyle Companion",
+    },
+  },
 }
 
 export default en

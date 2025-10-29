@@ -38,7 +38,7 @@ export async function getMessagesForChat(
     .select("*")
     .eq("chat_id", chatId)
     .is("deleted_at", null)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1)
 
   return { data: data as Message[], error }

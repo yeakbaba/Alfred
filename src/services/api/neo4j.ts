@@ -3,8 +3,8 @@
  * Handles syncing user data to Neo4j graph database
  */
 
-// const NEO4J_API_BASE_URL = "https://alfred-agents-830452200897.us-central1.run.app"
-const NEO4J_API_BASE_URL = "http://127.0.0.1:8080"
+const NEO4J_API_BASE_URL = "https://alfred-agents-830452200897.us-central1.run.app"
+// const NEO4J_API_BASE_URL = "192.168.3.255:8080"
 
 export interface SyncPersonPayload {
   supabase_id: string

@@ -13,6 +13,7 @@ import {
   Animated,
   Easing,
   ActivityIndicator,
+  ScrollView,
 } from "react-native"
 import { useLocalSearchParams, useRouter } from "expo-router"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
@@ -45,11 +46,14 @@ import {
   hasChatContextCache,
 } from "@/services/supabase"
 import { RelationshipSelectionModal } from "@/components/RelationshipSelectionModal"
+import { AgentSelector } from "@/components/AgentSelector"
+import { MentionAutocomplete } from "@/components/MentionAutocomplete"
 import {
   createConnectionInNeo4j,
   processMessageWithAlfred,
   initializeChatContext,
 } from "@/services/api/neo4j"
+import { DEFAULT_AGENT, type Agent, getAgentByUsername } from "@/config/agents"
 
 interface ChatMessage {
   id: string
@@ -78,6 +82,7 @@ interface ChatDetail {
   type: "dm" | "group"
   participant_count: number
   alfred_enabled: boolean
+  active_agent?: string
 }
 
 export default function ChatDetailScreen() {
@@ -114,7 +119,14 @@ export default function ChatDetailScreen() {
 
   // Image upload states
   const [isUploadingImage, setIsUploadingImage] = useState(false)
-  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null)
+
+  // Agent states
+  const [selectedAgent, setSelectedAgent] = useState<Agent>(DEFAULT_AGENT)
+  const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState("")
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const [optimizedImageUri, setOptimizedImageUri] = useState<string | null>(null)
 
   // Load chat details and participants
   useEffect(() => {
@@ -141,6 +153,14 @@ export default function ChatDetailScreen() {
         if (typedChatData) {
           setChat(typedChatData)
 
+          // Set active agent from chat data
+          if (typedChatData.active_agent) {
+            const agent = getAgentByUsername(typedChatData.active_agent)
+            if (agent) {
+              setSelectedAgent(agent)
+            }
+          }
+
           // Check for invitation (only for DM chats)
           if (typedChatData.type === "dm") {
             // Check for invitation sent TO me
@@ -157,7 +177,7 @@ export default function ChatDetailScreen() {
                 .eq("related_chat_id", id)
                 .eq("invited_by", user.id)
                 .in("status", ["pending", "rejected"])
-                .eq("invitation_context", "chat")
+                .eq("invitation_context", "chat"),
             )
 
             // If I received a pending invitation, show accept/reject UI
@@ -176,7 +196,9 @@ export default function ChatDetailScreen() {
               if (sentInvitation.status === "pending" || sentInvitation.status === "rejected") {
                 setHasAnyInvitation(true) // Hide buttons
                 setInvitation(null) // Don't show accept/reject UI
-                console.log("[ChatDetail] Found sent invitation (pending/rejected), hiding action buttons")
+                console.log(
+                  "[ChatDetail] Found sent invitation (pending/rejected), hiding action buttons",
+                )
               }
             } else {
               // No invitations found
@@ -282,6 +304,7 @@ export default function ChatDetailScreen() {
             id: msg.id,
             sender_id: msg.sender_id,
             content: msg.content,
+            content_type: msg.content_type,
             created_at: msg.created_at,
             status: msg.status,
             sender_type: msg.sender_type,
@@ -323,13 +346,14 @@ export default function ChatDetailScreen() {
           id: msg.id,
           sender_id: msg.sender_id,
           content: msg.content,
+          content_type: msg.content_type,
           created_at: msg.created_at,
           status: msg.status,
           sender_type: msg.sender_type,
         }))
 
-        // Prepend older messages to the beginning
-        setMessages((prev) => [...newMessages, ...prev])
+        // Append older messages to the end (since we're using descending order)
+        setMessages((prev) => [...prev, ...newMessages])
 
         // Check if there are more messages
         setHasMoreMessages(messagesData.length === 50)
@@ -374,14 +398,13 @@ export default function ChatDetailScreen() {
 
         // Check if this is Alfred's typing indicator placeholder
         const isAlfredTyping =
-          newMsg.sender_type === "alfred" &&
-          newMsg.status === "sending" &&
-          newMsg.content === ""
+          newMsg.sender_type === "alfred" && newMsg.status === "sending" && newMsg.content === ""
 
         const newMessage: ChatMessage = {
           id: newMsg.id,
           sender_id: newMsg.sender_id,
           content: newMsg.content,
+          content_type: newMsg.content_type,
           created_at: newMsg.created_at,
           status: newMsg.status,
           sender_type: newMsg.sender_type,
@@ -401,7 +424,7 @@ export default function ChatDetailScreen() {
             return prev
           }
           console.log("[Realtime] Previous messages count:", prev.length)
-          return [...prev, newMessage]
+          return [newMessage, ...prev]
         })
 
         // Note: inverted FlatList automatically scrolls to show new messages
@@ -443,6 +466,7 @@ export default function ChatDetailScreen() {
                   ...msg,
                   status: updatedMsg.status,
                   content: updatedMsg.content,
+                  content_type: updatedMsg.content_type,
                   isTyping: false, // Remove typing indicator
                 }
               : msg,
@@ -570,10 +594,7 @@ export default function ChatDetailScreen() {
 
     try {
       const { error } = await executeQuery<any>((client) =>
-        client
-          .from("chats")
-          .update({ alfred_enabled: newAlfredEnabled })
-          .eq("id", chat.id)
+        client.from("chats").update({ alfred_enabled: newAlfredEnabled }).eq("id", chat.id),
       )
 
       if (error) throw error
@@ -604,12 +625,76 @@ export default function ChatDetailScreen() {
         "Success",
         newAlfredEnabled
           ? "Alfred has been added to the chat"
-          : "Alfred has been removed from the chat"
+          : "Alfred has been removed from the chat",
       )
     } catch (error) {
       console.error("Error toggling Alfred:", error)
       Alert.alert("Error", "Failed to update Alfred status")
     }
+  }
+
+  const handleSelectAgent = async (agent: Agent) => {
+    setSelectedAgent(agent)
+
+    // Update active_agent in database
+    if (chat) {
+      try {
+        const { error } = await executeQuery((client) =>
+          client.from("chats").update({ active_agent: agent.username }).eq("id", chat.id),
+        )
+
+        if (error) {
+          console.error("Error updating active agent:", error)
+        }
+      } catch (error) {
+        console.error("Error updating active agent:", error)
+      }
+    }
+
+    // Add mention to text input at cursor position
+    const mention = `@${agent.username} `
+    setMessageText((prev) => {
+      const before = prev.slice(0, cursorPosition)
+      const after = prev.slice(cursorPosition)
+      return before + mention + after
+    })
+    setCursorPosition(cursorPosition + mention.length)
+  }
+
+  const handleTextChange = (text: string) => {
+    setMessageText(text)
+
+    // Check for @ mention trigger
+    const cursorPos = text.length // Simple: assume cursor at end
+    const textBeforeCursor = text.slice(0, cursorPos)
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/)
+
+    if (mentionMatch) {
+      setMentionQuery(mentionMatch[1])
+      setShowMentionAutocomplete(true)
+    } else {
+      setShowMentionAutocomplete(false)
+      setMentionQuery("")
+    }
+  }
+
+  const handleSelectMention = (agent: Agent) => {
+    const mention = `@${agent.username} `
+
+    // Replace the incomplete mention with the complete one
+    const textBeforeCursor = messageText.slice(0, cursorPosition)
+    const textAfterCursor = messageText.slice(cursorPosition)
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/)
+
+    if (mentionMatch) {
+      const beforeMention = textBeforeCursor.slice(0, mentionMatch.index)
+      const newText = beforeMention + mention + textAfterCursor
+      setMessageText(newText)
+      setCursorPosition(beforeMention.length + mention.length)
+    }
+
+    setShowMentionAutocomplete(false)
+    setMentionQuery("")
   }
 
   const handleEditRelationship = () => {
@@ -628,40 +713,36 @@ export default function ChatDetailScreen() {
   const handleAcceptInvitation = async () => {
     if (!invitation || !user || !otherUser) return
 
-    Alert.alert(
-      "Accept Invitation",
-      "Do you want to accept this invitation and start chatting?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Accept",
-          onPress: async () => {
-            setIsProcessingInvitation(true)
-            try {
-              // Accept the invitation
-              const { error: acceptError } = await acceptInvitation(invitation.id, user.id)
-              if (acceptError) throw acceptError
+    Alert.alert("Accept Invitation", "Do you want to accept this invitation and start chatting?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Accept",
+        onPress: async () => {
+          setIsProcessingInvitation(true)
+          try {
+            // Accept the invitation
+            const { error: acceptError } = await acceptInvitation(invitation.id, user.id)
+            if (acceptError) throw acceptError
 
-              // Clear invitation states - now buttons will be visible
-              setInvitation(null)
-              setHasAnyInvitation(false)
+            // Clear invitation states - now buttons will be visible
+            setInvitation(null)
+            setHasAnyInvitation(false)
 
-              // Don't automatically show relationship modal
-              // User will click "Edit Relationship" button when ready
-              Alert.alert(
-                "Invitation Accepted",
-                "You can now chat freely. Use 'Edit Relationship' button to define your relationship."
-              )
-            } catch (error) {
-              console.error("Error accepting invitation:", error)
-              Alert.alert("Error", "Failed to accept invitation. Please try again.")
-            } finally {
-              setIsProcessingInvitation(false)
-            }
-          },
+            // Don't automatically show relationship modal
+            // User will click "Edit Relationship" button when ready
+            Alert.alert(
+              "Invitation Accepted",
+              "You can now chat freely. Use 'Edit Relationship' button to define your relationship.",
+            )
+          } catch (error) {
+            console.error("Error accepting invitation:", error)
+            Alert.alert("Error", "Failed to accept invitation. Please try again.")
+          } finally {
+            setIsProcessingInvitation(false)
+          }
         },
-      ],
-    )
+      },
+    ])
   }
 
   const handleRejectInvitation = async () => {
@@ -727,13 +808,32 @@ export default function ChatDetailScreen() {
         `Image optimized: ${imageAsset.fileSize || "unknown"} -> ${optimizedImage.size} bytes`,
       )
 
-      // Upload to Supabase
-      if (!user?.id || !chat?.id) {
-        throw new Error("User ID or Chat ID not available")
-      }
+      // Store optimized image URI for preview
+      setSelectedImageUri(imageAsset.uri)
+      setOptimizedImageUri(optimizedImage.uri)
+    } catch (error) {
+      console.error("Error picking/optimizing image:", error)
+      Alert.alert("Error", "Failed to process image. Please try again.")
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
 
+  const handleRemoveImage = () => {
+    setSelectedImageUri(null)
+    setOptimizedImageUri(null)
+  }
+
+  const handleSendWithImage = async () => {
+    if (!optimizedImageUri || !user?.id || !chat?.id) return
+
+    const caption = messageText.trim()
+    setMessageText("") // Clear input immediately
+    setIsSending(true)
+
+    try {
       console.log("Uploading image to Supabase...")
-      const uploadResult = await uploadChatImage(optimizedImage.uri, user.id, chat.id)
+      const uploadResult = await uploadChatImage(optimizedImageUri, user.id, chat.id)
 
       if (uploadResult.error) {
         throw uploadResult.error
@@ -741,11 +841,13 @@ export default function ChatDetailScreen() {
 
       console.log("Image uploaded successfully:", uploadResult.url)
 
-      // Send message with image URL
+      // Send message with image URL and optional caption
+      const content = caption ? `${uploadResult.url}\n${caption}` : uploadResult.url
+
       const { data: newMessage, error } = await sendMessageToSupabase({
         chat_id: chat.id,
         sender_id: user.id,
-        content: uploadResult.url, // Store image URL in content
+        content,
         content_type: "image",
         sender_type: "user",
       })
@@ -769,22 +871,31 @@ export default function ChatDetailScreen() {
         setMessages((prev) => {
           const exists = prev.find((m) => m.id === newMessage.id)
           if (!exists) {
-            return [...prev, optimisticMessage]
+            return [optimisticMessage, ...prev]
           }
           return prev
         })
       }
 
-      setSelectedImage(null)
+      // Clear image selection
+      setSelectedImageUri(null)
+      setOptimizedImageUri(null)
     } catch (error) {
-      console.error("Error picking/uploading image:", error)
+      console.error("Error uploading image:", error)
       Alert.alert("Error", "Failed to upload image. Please try again.")
+      setMessageText(caption) // Restore caption on error
     } finally {
-      setIsUploadingImage(false)
+      setIsSending(false)
     }
   }
 
   const handleSendMessage = async () => {
+    // If image is selected, send with image
+    if (optimizedImageUri) {
+      await handleSendWithImage()
+      return
+    }
+
     if (!messageText.trim() || !chat || !user?.id) return
 
     const content = messageText.trim()
@@ -827,7 +938,7 @@ export default function ChatDetailScreen() {
             return prev
           }
           console.log("[SendMessage] Adding message to state (optimistic)")
-          return [...prev, optimisticMessage]
+          return [optimisticMessage, ...prev]
         })
 
         // Step 3: Process message with Alfred (memory extraction + response generation)
@@ -935,9 +1046,7 @@ export default function ChatDetailScreen() {
       console.log("[handleRelationshipSelected] Creating/updating connection via Neo4j API:", data)
 
       // Prepare metadata if subtype exists
-      const metadata = data.relationshipSubtype
-        ? { subtype: data.relationshipSubtype }
-        : undefined
+      const metadata = data.relationshipSubtype ? { subtype: data.relationshipSubtype } : undefined
 
       // Call Neo4j API - this will handle both Neo4j and Supabase updates
       const result = await createConnectionInNeo4j({
@@ -1034,6 +1143,21 @@ export default function ChatDetailScreen() {
     const isOwnMessage = item.sender_id === user?.id
     const showStatusIcon = isOwnMessage
     const isAlfred = item.sender_type === "alfred"
+    const isGroupChat = chat?.type === "group"
+
+    // Get sender name
+    let senderName = ""
+    if (!isOwnMessage) {
+      if (isAlfred) {
+        senderName = "Alfred"
+      } else {
+        const sender = participants.find((p) => p.user_id === item.sender_id)
+        senderName = sender?.name || "Unknown"
+      }
+    }
+
+    // Show sender name in group chats or when Alfred sends message in DM
+    const showSenderName = !isOwnMessage && (isGroupChat || isAlfred)
 
     return (
       <View
@@ -1056,6 +1180,20 @@ export default function ChatDetailScreen() {
             },
           ]}
         >
+          {/* Show sender name if needed */}
+          {showSenderName && (
+            <Text
+              text={senderName}
+              style={[
+                themed($senderName),
+                {
+                  color: isAlfred ? theme.colors.tint : theme.colors.textDim,
+                  fontWeight: "600",
+                },
+              ]}
+            />
+          )}
+
           {/* Show typing indicator for Alfred's placeholder messages */}
           {item.isTyping ? (
             <View style={themed($typingContent)}>
@@ -1123,82 +1261,66 @@ export default function ChatDetailScreen() {
       contentContainerStyle={themed($container)}
       safeAreaEdges={["top", "bottom"]}
     >
-      {/* Chat Header */}
+      {/* Chat Header - Single Row */}
       <View style={themed($header)}>
-        <View style={themed($headerTop)}>
-          <Pressable onPress={handleBack} style={themed($backButton)}>
-            <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.text} />
-          </Pressable>
-          <View style={themed($headerTitle)}>
-            <Text
-              preset="heading"
-              text={chat?.type === "group" ? "Group Chat" : "Chat"}
-              style={themed($chatType)}
-            />
-          </View>
+        {/* Back Button */}
+        <Pressable onPress={handleBack} style={themed($backButton)}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color={theme.colors.text} />
+        </Pressable>
 
-          {/* Header Action Icons - Hide if there's any pending/rejected invitation */}
-          {!hasAnyInvitation && (
-            <View style={themed($headerIcons)}>
-              {/* Edit Relationship Icon - Only show for DM chats */}
-              {chat?.type === "dm" && (
-                <Pressable onPress={handleEditRelationship} style={themed($headerIcon)}>
-                  <MaterialCommunityIcons name="account-edit" size={22} color={theme.colors.text} />
-                </Pressable>
-              )}
+        {/* Chat Metadata - Participants */}
+        <View style={themed($chatMetadata)}>
+          {/* Horizontal Scrollable Participant Avatars */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={themed($participantAvatars)}
+          >
+            {participants
+              .filter((p) => !p.isAlfred)
+              .map((participant, index) => {
+                // Get first name only
+                const firstName = participant.name.split(" ")[0]
 
-              {/* Toggle Alfred Icon */}
-              <Pressable onPress={handleToggleAlfred} style={themed($headerIcon)}>
-                <MaterialCommunityIcons
-                  name={chat?.alfred_enabled ? "robot-off" : "robot"}
-                  size={22}
-                  color={chat?.alfred_enabled ? theme.colors.tint : theme.colors.text}
-                />
-              </Pressable>
-            </View>
-          )}
+                return (
+                  <View key={participant.id} style={themed($avatarContainer)}>
+                    <View style={themed($avatarWrapper)}>
+                      {participant.avatar && participant.avatar !== "alfred" ? (
+                        <Image
+                          source={
+                            typeof participant.avatar === "string"
+                              ? { uri: participant.avatar }
+                              : participant.avatar
+                          }
+                          style={themed($participantAvatarSmall)}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={themed($participantAvatarSmallPlaceholder)}>
+                          <Text
+                            text={participant.name.charAt(0).toUpperCase()}
+                            style={themed($avatarInitial)}
+                          />
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Show first name below avatar */}
+                    <Text text={firstName} style={themed($participantNameText)} numberOfLines={1} />
+                  </View>
+                )
+              })}
+          </ScrollView>
         </View>
 
-        {/* Participants */}
-        {participants.length > 0 && (
-          <View style={themed($participantsList)}>
-            <FlatList
-              data={participants}
-              renderItem={({ item }) => (
-                <View style={themed($participantItem)}>
-                  {item.avatar === "alfred" ? (
-                    // Alfred icon
-                    <Image
-                      source={require("../../../assets/images/alfred_icon.jpg")}
-                      style={themed($participantAvatarImage)}
-                    />
-                  ) : (
-                    // Regular avatar or placeholder
-                    <View
-                      style={[
-                        themed($participantAvatar),
-                        item.isAlfred && { backgroundColor: theme.colors.tint },
-                      ]}
-                    >
-                      <Text
-                        text={item.name.charAt(0).toUpperCase()}
-                        style={
-                          item.isAlfred
-                            ? { color: theme.colors.palette.neutral100, fontWeight: "600" }
-                            : {}
-                        }
-                      />
-                    </View>
-                  )}
-                  <Text text={item.name} style={themed($participantName)} numberOfLines={1} />
-                </View>
-              )}
-              keyExtractor={(item) => item.id}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={themed($participantsContent)}
-            />
-          </View>
+        {/* Settings Button */}
+        {!hasAnyInvitation && (
+          <Pressable
+            onPress={() => router.push(`/chats/${id}/settings`)}
+            style={themed($settingsButton)}
+          >
+            <MaterialCommunityIcons name="cog" size={24} color={theme.colors.text} />
+          </Pressable>
         )}
       </View>
 
@@ -1210,7 +1332,7 @@ export default function ChatDetailScreen() {
       ) : (
         <FlatList
           ref={flatListRef}
-          data={[...messages].reverse()}
+          data={messages}
           renderItem={renderMessageItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={themed($messagesList)}
@@ -1273,10 +1395,7 @@ export default function ChatDetailScreen() {
                 isProcessingInvitation && { opacity: 0.5 },
               ]}
             >
-              <Text
-                text="Reject"
-                style={[themed($buttonText), { color: theme.colors.error }]}
-              />
+              <Text text="Reject" style={[themed($buttonText), { color: theme.colors.error }]} />
             </Pressable>
             <Pressable
               onPress={handleAcceptInvitation}
@@ -1297,42 +1416,73 @@ export default function ChatDetailScreen() {
         </View>
       ) : (
         <View style={themed($inputContainer)}>
+          {/* Image Preview */}
+          {selectedImageUri && (
+            <View style={themed($imagePreviewContainer)}>
+              <Image
+                source={{ uri: selectedImageUri }}
+                style={themed($imagePreview)}
+                resizeMode="cover"
+              />
+              <Pressable onPress={handleRemoveImage} style={themed($removeImageButton)}>
+                <MaterialCommunityIcons name="close-circle" size={24} color="white" />
+              </Pressable>
+            </View>
+          )}
+
           <View style={themed($inputWrapper)}>
-            <Pressable
-              onPress={handlePickImage}
-              disabled={isUploadingImage || isSending}
-              style={({ pressed }) => [
-                themed($attachmentButton),
-                pressed && { opacity: 0.7 },
-                (isUploadingImage || isSending) && { opacity: 0.5 },
-              ]}
-            >
-              {isUploadingImage ? (
-                <ActivityIndicator size="small" color={theme.colors.tint} />
-              ) : (
-                <MaterialCommunityIcons name="image-plus" size={24} color={theme.colors.tint} />
-              )}
-            </Pressable>
-            <TextInput
-              style={themed($input)}
-              placeholder="Type a message..."
-              value={messageText}
-              onChangeText={setMessageText}
-              placeholderTextColor={theme.colors.textDim}
-              editable={!isSending && !isUploadingImage}
-              multiline
-            />
-            <Pressable
-              onPress={handleSendMessage}
-              disabled={!messageText.trim() || isSending || isUploadingImage}
-              style={({ pressed }) => [
-                themed($sendButton),
-                pressed && { opacity: 0.7 },
-                (!messageText.trim() || isSending || isUploadingImage) && { opacity: 0.5 },
-              ]}
-            >
-              <MaterialCommunityIcons name="send" size={20} color={theme.colors.tint} />
-            </Pressable>
+            {/* Mention Autocomplete */}
+            {showMentionAutocomplete && (
+              <View style={themed($mentionAutocompleteWrapper)}>
+                <MentionAutocomplete query={mentionQuery} onSelectMention={handleSelectMention} />
+              </View>
+            )}
+
+            {/* Agent Selector */}
+            <View style={themed($agentSelectorWrapper)}>
+              <AgentSelector selectedAgent={selectedAgent} onSelectAgent={handleSelectAgent} />
+            </View>
+
+            <View style={themed($inputRow)}>
+              <Pressable
+                onPress={handlePickImage}
+                disabled={isUploadingImage || isSending || !!selectedImageUri}
+                style={({ pressed }) => [
+                  themed($attachmentButton),
+                  pressed && { opacity: 0.7 },
+                  (isUploadingImage || isSending || !!selectedImageUri) && { opacity: 0.5 },
+                ]}
+              >
+                {isUploadingImage ? (
+                  <ActivityIndicator size="small" color={theme.colors.tint} />
+                ) : (
+                  <MaterialCommunityIcons name="image-plus" size={24} color={theme.colors.tint} />
+                )}
+              </Pressable>
+              <TextInput
+                style={themed($input)}
+                placeholder={selectedImageUri ? "Add a caption..." : "Type a message..."}
+                value={messageText}
+                onChangeText={handleTextChange}
+                onSelectionChange={(e) => setCursorPosition(e.nativeEvent.selection.end)}
+                placeholderTextColor={theme.colors.textDim}
+                editable={!isSending && !isUploadingImage}
+                multiline
+              />
+              <Pressable
+                onPress={handleSendMessage}
+                disabled={(!messageText.trim() && !selectedImageUri) || isSending || isUploadingImage}
+                style={({ pressed }) => [
+                  themed($sendButton),
+                  pressed && { opacity: 0.7 },
+                  ((!messageText.trim() && !selectedImageUri) || isSending || isUploadingImage) && {
+                    opacity: 0.5,
+                  },
+                ]}
+              >
+                <MaterialCommunityIcons name="send" size={20} color={theme.colors.tint} />
+              </Pressable>
+            </View>
           </View>
         </View>
       )}
@@ -1355,61 +1505,65 @@ const $header: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   paddingVertical: spacing.md,
   borderBottomWidth: 1,
   borderBottomColor: colors.border,
-})
-
-const $headerTop: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
   alignItems: "center",
-  justifyContent: "space-between",
-  marginBottom: spacing.sm,
+  gap: spacing.sm,
 })
 
 const $backButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  padding: spacing.sm,
-  marginStart: -spacing.sm,
+  padding: spacing.xs,
 })
 
-const $headerTitle: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+const $chatMetadata: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
-  alignItems: "center",
 })
 
-const $chatType: ThemedStyle<any> = () => ({
-  fontSize: 16,
-})
-
-const $participantsList: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  marginTop: spacing.sm,
-})
-
-const $participantsContent: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  gap: spacing.xs,
-})
-
-const $participantItem: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+const $participantAvatars: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.xs,
+  alignItems: "flex-start",
+  gap: spacing.xxs,
 })
 
-const $participantAvatar: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  width: 32,
-  height: 32,
-  borderRadius: 16,
-  backgroundColor: colors.palette.neutral400,
+const $avatarContainer: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  width: 50,
+})
+
+const $avatarWrapper: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  borderWidth: 2,
+  borderColor: colors.background,
+  borderRadius: 18,
+  marginBottom: 4,
+})
+
+const $participantAvatarSmall: ThemedStyle<ImageStyle> = () => ({
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+})
+
+const $participantAvatarSmallPlaceholder: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+  backgroundColor: colors.palette.neutral300,
   justifyContent: "center",
   alignItems: "center",
 })
 
-const $participantAvatarImage: ThemedStyle<ImageStyle> = () => ({
-  width: 32,
-  height: 32,
-  borderRadius: 16,
+const $avatarInitial: ThemedStyle<any> = () => ({
+  fontSize: 14,
+  fontWeight: "600",
 })
 
-const $participantName: ThemedStyle<any> = () => ({
-  fontSize: 12,
-  maxWidth: 80,
+const $participantNameText: ThemedStyle<any> = ({ colors }) => ({
+  fontSize: 10,
+  color: colors.textDim,
+  textAlign: "center",
+})
+
+const $settingsButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  padding: spacing.xs,
 })
 
 const $loadingContainer: ThemedStyle<ViewStyle> = () => ({
@@ -1465,7 +1619,43 @@ const $inputContainer: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   borderTopColor: colors.border,
 })
 
-const $inputWrapper: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
+const $imagePreviewContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginBottom: spacing.sm,
+  position: "relative",
+})
+
+const $imagePreview: ThemedStyle<ImageStyle> = () => ({
+  width: 100,
+  height: 100,
+  borderRadius: 8,
+})
+
+const $removeImageButton: ThemedStyle<ViewStyle> = () => ({
+  position: "absolute",
+  top: -8,
+  right: -8,
+  backgroundColor: "rgba(0,0,0,0.6)",
+  borderRadius: 12,
+})
+
+const $inputWrapper: ThemedStyle<ViewStyle> = () => ({
+  position: "relative",
+})
+
+const $mentionAutocompleteWrapper: ThemedStyle<ViewStyle> = () => ({
+  position: "absolute",
+  bottom: "100%",
+  left: 0,
+  right: 0,
+  zIndex: 1000,
+})
+
+const $agentSelectorWrapper: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  alignItems: "flex-end",
+  paddingBottom: spacing.xs,
+})
+
+const $inputRow: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   flexDirection: "row",
   alignItems: "flex-end",
   backgroundColor: colors.palette.neutral200,
@@ -1559,14 +1749,9 @@ const $loadingMoreText: ThemedStyle<any> = ({ colors }) => ({
   color: colors.textDim,
 })
 
-const $headerIcons: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.xs,
-})
-
-const $headerIcon: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  padding: spacing.xs,
+const $senderName: ThemedStyle<any> = ({ spacing }) => ({
+  fontSize: 12,
+  marginBottom: spacing.xxs,
 })
 
 const $typingContent: ThemedStyle<ViewStyle> = ({ spacing }) => ({

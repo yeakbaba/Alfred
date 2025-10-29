@@ -42,7 +42,7 @@ export default function ChatsScreen() {
     chat.name.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
-  const renderChatItem = ({ item }: { item: typeof chats[0] }) => (
+  const renderChatItem = ({ item }: { item: (typeof chats)[0] }) => (
     <Pressable
       style={({ pressed }) => [themed($chatItem), pressed && themed($chatItemPressed)]}
       onPress={() => router.push(`/chats/${item.id}`)}
@@ -92,11 +92,7 @@ export default function ChatsScreen() {
     <Screen preset="fixed" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
       <View style={themed($header)}>
         <Text text="Chats" preset="heading" />
-        <Button
-          text="New"
-          preset="default"
-          onPress={() => router.push("/chats/new")}
-        />
+        <Button text="New" preset="default" onPress={() => router.push("/chats/new")} />
       </View>
 
       <TextField
@@ -105,7 +101,12 @@ export default function ChatsScreen() {
         placeholder="Search chats..."
         containerStyle={themed($searchField)}
         LeftAccessory={() => (
-          <MaterialCommunityIcons name="magnify" size={20} color={theme.colors.textDim} />
+          <MaterialCommunityIcons
+            style={themed($searchFieldLeft)}
+            name="magnify"
+            size={20}
+            color={theme.colors.textDim}
+          />
         )}
       />
 
@@ -157,6 +158,10 @@ const $header: ThemedStyle<ViewStyle> = ({ spacing }) => ({
 
 const $searchField: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   marginBottom: spacing.md,
+})
+const $searchFieldLeft: ThemedStyle<TextStyle> = ({ spacing }) => ({
+  alignSelf: "center",
+  marginLeft: spacing.xs,
 })
 
 const $loadingContainer: ThemedStyle<ViewStyle> = () => ({

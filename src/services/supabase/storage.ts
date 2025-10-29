@@ -1,5 +1,4 @@
 import type { StorageError, FileObject } from "@supabase/supabase-js"
-import * as FileSystem from "expo-file-system"
 
 import { supabase } from "./supabaseClient"
 
@@ -280,24 +279,24 @@ export async function uploadChatImage(
     const timestamp = Date.now()
     const fileName = `${userId}/${chatId}/${timestamp}.jpg`
 
-    // Read file as base64
-    const base64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
+    // Read file as ArrayBuffer using XMLHttpRequest
+    const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.onload = function () {
+        resolve(xhr.response)
+      }
+      xhr.onerror = function () {
+        reject(new Error("Failed to read file"))
+      }
+      xhr.responseType = "arraybuffer"
+      xhr.open("GET", uri, true)
+      xhr.send()
     })
-
-    // Convert base64 to ArrayBuffer
-    const byteCharacters = atob(base64)
-    const byteNumbers = new Array(byteCharacters.length)
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i)
-    }
-    const byteArray = new Uint8Array(byteNumbers)
-    const blob = new Blob([byteArray], { type: "image/jpeg" })
 
     // Upload to Supabase storage
     const { data, error } = await supabase.storage
       .from(CHAT_IMAGES_BUCKET)
-      .upload(fileName, blob, {
+      .upload(fileName, arrayBuffer, {
         contentType: "image/jpeg",
         cacheControl: "3600",
         upsert: false,
@@ -358,4 +357,94 @@ export async function listChatImages(
     offset: 0,
     sortBy: { column: "created_at", order: "desc" },
   })
+}
+
+// ============================================================================
+// Profile Photo Specific Functions
+// ============================================================================
+
+const PROFILE_PHOTOS_BUCKET = "profile-photos"
+
+export interface UploadProfilePhotoResult {
+  url: string
+  path: string
+  error: StorageError | null
+}
+
+/**
+ * Upload a profile photo from local file URI
+ * @param uri - Local file URI (from image picker or camera)
+ * @param userId - User ID
+ */
+export async function uploadProfilePhoto(
+  uri: string,
+  userId: string,
+): Promise<UploadProfilePhotoResult> {
+  try {
+    // Generate unique filename
+    const timestamp = Date.now()
+    const fileName = `${userId}/${timestamp}.jpg`
+
+    // Read file as ArrayBuffer using XMLHttpRequest
+    const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.onload = function () {
+        resolve(xhr.response)
+      }
+      xhr.onerror = function () {
+        reject(new Error("Failed to read file"))
+      }
+      xhr.responseType = "arraybuffer"
+      xhr.open("GET", uri, true)
+      xhr.send()
+    })
+
+    // Upload to Supabase storage
+    const { data, error } = await supabase.storage
+      .from(PROFILE_PHOTOS_BUCKET)
+      .upload(fileName, arrayBuffer, {
+        contentType: "image/jpeg",
+        cacheControl: "3600",
+        upsert: false,
+      })
+
+    if (error) {
+      console.error("Supabase upload error:", error)
+      return { url: "", path: "", error }
+    }
+
+    // Get public URL
+    const publicUrl = getPublicUrl(PROFILE_PHOTOS_BUCKET, data.path)
+
+    console.log("Profile photo uploaded successfully:", publicUrl)
+
+    return {
+      url: publicUrl,
+      path: data.path,
+      error: null,
+    }
+  } catch (error) {
+    console.error("Error uploading profile photo:", error)
+    return {
+      url: "",
+      path: "",
+      error: error as StorageError,
+    }
+  }
+}
+
+/**
+ * Delete a profile photo
+ * @param path - File path in storage
+ */
+export async function deleteProfilePhoto(path: string): Promise<{ error: StorageError | null }> {
+  return deleteFile(PROFILE_PHOTOS_BUCKET, path)
+}
+
+/**
+ * Get public URL for a profile photo
+ * @param path - File path in storage
+ */
+export function getProfilePhotoUrl(path: string): string {
+  return getPublicUrl(PROFILE_PHOTOS_BUCKET, path)
 }

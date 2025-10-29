@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react"
 import { View, ViewStyle, Linking, Pressable, Image, ActivityIndicator, Text as RNText } from "react-native"
 import Markdown from "react-native-markdown-display"
 import { Text } from "@/components/Text"
+import { ImageViewModal } from "@/components/ImageViewModal"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 
@@ -137,8 +138,31 @@ export const MessageContent: React.FC<MessageContentProps> = ({
   const { themed, theme } = useAppTheme()
   const [urlPreviews, setUrlPreviews] = useState<URLPreview[]>([])
   const [isLoadingPreviews, setIsLoadingPreviews] = useState(false)
-  const [imageLoading, setImageLoading] = useState(true)
+  const [imageLoading, setImageLoading] = useState(contentType === "image")
   const [imageError, setImageError] = useState(false)
+  const [showImageModal, setShowImageModal] = useState(false)
+
+  // Reset image loading state when content changes
+  useEffect(() => {
+    if (contentType === "image") {
+      console.log("Resetting image loading state for:", content)
+      setImageLoading(true)
+      setImageError(false)
+
+      // Fallback: Force hide loading after 10 seconds
+      const timeout = setTimeout(() => {
+        console.log("[Image] Timeout reached, forcing loading to false")
+        setImageLoading(false)
+      }, 10000)
+
+      return () => clearTimeout(timeout)
+    }
+  }, [content, contentType])
+
+  // Debug: Log state changes
+  useEffect(() => {
+    console.log("ImageLoading state changed:", imageLoading, "for content:", content?.substring(0, 50))
+  }, [imageLoading])
 
   useEffect(() => {
     // Only load URL previews for text messages
@@ -254,80 +278,194 @@ export const MessageContent: React.FC<MessageContentProps> = ({
   const markdownStyles = {
     body: {
       color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
-      fontSize: 14,
+      fontSize: 15,
+      lineHeight: 20,
       fontFamily: theme.typography.primary.normal,
     },
     paragraph: {
       marginTop: 0,
-      marginBottom: 4,
+      marginBottom: 8,
+      flexWrap: "wrap",
+      flexDirection: "row",
+      alignItems: "flex-start",
+    },
+    text: {
+      color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+      fontSize: 15,
+      lineHeight: 20,
+      fontFamily: theme.typography.primary.normal,
     },
     strong: {
       fontFamily: theme.typography.primary.semiBold,
+      fontWeight: "600",
     },
     em: {
       fontStyle: "italic",
+      fontFamily: theme.typography.primary.normal,
     },
     code_inline: {
       backgroundColor: isOwnMessage
-        ? theme.colors.palette.neutral200
+        ? "rgba(255,255,255,0.2)"
         : theme.colors.palette.neutral300,
-      color: theme.colors.text,
-      padding: 2,
+      color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+      paddingHorizontal: 4,
+      paddingVertical: 2,
       borderRadius: 4,
-      fontFamily: theme.typography.code.normal,
-      fontSize: 13,
+      fontFamily: theme.typography.code?.normal || "Courier",
+      fontSize: 14,
     },
     code_block: {
       backgroundColor: isOwnMessage
-        ? theme.colors.palette.neutral200
+        ? "rgba(255,255,255,0.15)"
         : theme.colors.palette.neutral300,
-      color: theme.colors.text,
-      padding: 8,
+      color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+      padding: 12,
       borderRadius: 8,
-      fontFamily: theme.typography.code.normal,
+      fontFamily: theme.typography.code?.normal || "Courier",
       fontSize: 13,
-      marginTop: 4,
-      marginBottom: 4,
+      lineHeight: 18,
+      marginTop: 8,
+      marginBottom: 8,
+    },
+    fence: {
+      backgroundColor: isOwnMessage
+        ? "rgba(255,255,255,0.15)"
+        : theme.colors.palette.neutral300,
+      color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+      padding: 12,
+      borderRadius: 8,
+      fontFamily: theme.typography.code?.normal || "Courier",
+      fontSize: 13,
+      lineHeight: 18,
+      marginTop: 8,
+      marginBottom: 8,
     },
     link: {
       color: isOwnMessage ? theme.colors.palette.accent300 : theme.colors.tint,
       textDecorationLine: "underline",
     },
     list_item: {
-      marginTop: 2,
-      marginBottom: 2,
+      marginTop: 4,
+      marginBottom: 4,
+      flexDirection: "row",
+    },
+    bullet_list: {
+      marginTop: 4,
+      marginBottom: 8,
+    },
+    ordered_list: {
+      marginTop: 4,
+      marginBottom: 8,
+    },
+    heading1: {
+      fontSize: 20,
+      lineHeight: 26,
+      fontFamily: theme.typography.primary.bold,
+      fontWeight: "bold",
+      marginTop: 12,
+      marginBottom: 8,
+    },
+    heading2: {
+      fontSize: 18,
+      lineHeight: 24,
+      fontFamily: theme.typography.primary.semiBold,
+      fontWeight: "600",
+      marginTop: 10,
+      marginBottom: 6,
+    },
+    heading3: {
+      fontSize: 16,
+      lineHeight: 22,
+      fontFamily: theme.typography.primary.semiBold,
+      fontWeight: "600",
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    blockquote: {
+      backgroundColor: isOwnMessage
+        ? "rgba(255,255,255,0.1)"
+        : theme.colors.palette.neutral200,
+      borderLeftWidth: 4,
+      borderLeftColor: isOwnMessage ? theme.colors.palette.accent300 : theme.colors.tint,
+      paddingLeft: 12,
+      paddingVertical: 8,
+      marginVertical: 8,
     },
   }
 
   // Render image message
   if (contentType === "image") {
+    // Check if content has caption (format: "url\ncaption")
+    const parts = content.split("\n")
+    const imageUrl = parts[0]
+    const caption = parts.length > 1 ? parts.slice(1).join("\n") : null
+
     return (
-      <View style={themed($imageContainer)}>
-        <Pressable onPress={() => handleURLPress(content)}>
-          {imageLoading && (
-            <View style={themed($imageLoadingContainer)}>
-              <ActivityIndicator size="small" color={theme.colors.textDim} />
+      <>
+        <View style={themed($imageContainer)}>
+          <Pressable onPress={() => setShowImageModal(true)}>
+            {imageError ? (
+              <View style={themed($imageErrorContainer)}>
+                <Text text="Failed to load image" style={{ color: theme.colors.error }} />
+              </View>
+            ) : (
+              <View style={{ position: "relative" }}>
+                <Image
+                  source={{ uri: imageUrl }}
+                  style={themed($messageImage)}
+                  resizeMode="contain"
+                  onLoadStart={() => {
+                    console.log("[Image] Load started:", imageUrl)
+                    setImageLoading(true)
+                    setImageError(false)
+                  }}
+                  onLoadEnd={() => {
+                    console.log("[Image] Load ended:", imageUrl)
+                    setImageLoading(false)
+                  }}
+                  onLoad={() => {
+                    console.log("[Image] onLoad called:", imageUrl)
+                    setImageLoading(false)
+                  }}
+                  onError={(e) => {
+                    console.error("[Image] Load error:", imageUrl, e.nativeEvent.error)
+                    setImageLoading(false)
+                    setImageError(true)
+                  }}
+                />
+                {imageLoading && !imageError && (
+                  <View style={themed($imageLoadingContainer)}>
+                    <ActivityIndicator size="large" color={theme.colors.tint} />
+                    <RNText style={{ color: "white", marginTop: 8, fontSize: 12 }}>
+                      Loading...
+                    </RNText>
+                  </View>
+                )}
+              </View>
+            )}
+          </Pressable>
+
+          {/* Caption */}
+          {caption && (
+            <View style={themed($captionContainer)}>
+              <Text
+                text={caption}
+                style={{
+                  color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+                  fontSize: 14,
+                }}
+              />
             </View>
           )}
-          {imageError ? (
-            <View style={themed($imageErrorContainer)}>
-              <Text text="Failed to load image" style={{ color: theme.colors.error }} />
-            </View>
-          ) : (
-            <Image
-              source={{ uri: content }}
-              style={themed($messageImage)}
-              resizeMode="cover"
-              onLoadStart={() => setImageLoading(true)}
-              onLoadEnd={() => setImageLoading(false)}
-              onError={() => {
-                setImageLoading(false)
-                setImageError(true)
-              }}
-            />
-          )}
-        </Pressable>
-      </View>
+        </View>
+
+        {/* Full screen image modal */}
+        <ImageViewModal
+          visible={showImageModal}
+          imageUri={imageUrl}
+          onClose={() => setShowImageModal(false)}
+        />
+      </>
     )
   }
 
@@ -414,13 +552,16 @@ const $previewLoadingContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
 
 const $imageContainer: ThemedStyle<ViewStyle> = () => ({
   width: "100%",
+  maxWidth: 280,
   borderRadius: 12,
   overflow: "hidden",
 })
 
 const $messageImage: ThemedStyle<any> = () => ({
   width: "100%",
-  height: 200,
+  aspectRatio: 4 / 3,
+  minHeight: 150,
+  maxHeight: 300,
   borderRadius: 12,
 })
 
@@ -441,4 +582,9 @@ const $imageErrorContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   alignItems: "center",
   backgroundColor: "rgba(255,0,0,0.1)",
   borderRadius: 12,
+})
+
+const $captionContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginTop: spacing.xs,
+  paddingTop: spacing.xs,
 })

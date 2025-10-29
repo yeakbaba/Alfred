@@ -98,6 +98,9 @@ export {
   acceptInvitation,
   rejectInvitation,
   removeParticipantFromChat,
+  getSentInvitations,
+  getReceivedInvitations,
+  sendConnectionInvitation,
 } from "./invitations"
 
 // Message functions
@@ -120,4 +123,5 @@ export {
   createUserConnection,
   hasUserConnectionsForChat,
   hasChatContextCache,
+  getAllUserConnections,
 } from "./userConnections"

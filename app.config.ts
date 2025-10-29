@@ -24,6 +24,7 @@ module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
       infoPlist: {
         NSPhotoLibraryUsageDescription: "Alfred needs access to your photo library to send images in chats.",
         NSPhotoLibraryAddUsageDescription: "Alfred needs permission to save images to your photo library.",
+        NSCameraUsageDescription: "Alfred needs access to your camera to take photos for your profile and to send in chats.",
       },
       // This privacyManifests is to get you started.
       // See Expo's guide on apple privacy manifests here:

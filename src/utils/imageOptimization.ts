@@ -196,3 +196,125 @@ export function formatFileSize(bytes: number): string {
 
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i]
 }
+
+/**
+ * Request permission to access camera
+ */
+export async function requestCameraPermissions(): Promise<boolean> {
+  const { status } = await ImagePicker.requestCameraPermissionsAsync()
+  return status === "granted"
+}
+
+/**
+ * Take a photo with the camera
+ */
+export async function takePhoto(): Promise<ImagePicker.ImagePickerAsset | null> {
+  try {
+    // Request permissions
+    const hasPermission = await requestCameraPermissions()
+    if (!hasPermission) {
+      console.warn("Camera permission denied")
+      return null
+    }
+
+    // Launch camera
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [1, 1], // Square for profile photos
+      quality: 1, // We'll compress it ourselves
+    })
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return null
+    }
+
+    return result.assets[0]
+  } catch (error) {
+    console.error("Error taking photo:", error)
+    return null
+  }
+}
+
+/**
+ * Pick or take a profile photo (shows action sheet)
+ */
+export async function pickProfilePhoto(): Promise<ImagePicker.ImagePickerAsset | null> {
+  try {
+    // Request permissions
+    const hasPermission = await requestImagePermissions()
+    if (!hasPermission) {
+      console.warn("Image library permission denied")
+      return null
+    }
+
+    // Launch image picker
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1], // Square for profile photos
+      quality: 1, // We'll compress it ourselves
+      allowsMultipleSelection: false,
+    })
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return null
+    }
+
+    return result.assets[0]
+  } catch (error) {
+    console.error("Error picking profile photo:", error)
+    return null
+  }
+}
+
+/**
+ * Optimize profile photo to circular format
+ * - Resize to 512x512 (standard profile photo size)
+ * - Compress with quality 0.85
+ * - Convert to JPEG for smaller file size
+ */
+export async function optimizeProfilePhoto(
+  imageAsset: ImagePicker.ImagePickerAsset,
+): Promise<OptimizedImage> {
+  try {
+    const size = 512 // Standard profile photo size
+
+    console.log(`Optimizing profile photo from ${imageAsset.width}x${imageAsset.height} to ${size}x${size}`)
+
+    // Step 1: Resize to square using ImageManipulator
+    const resizedImage = await ImageManipulator.manipulateAsync(
+      imageAsset.uri,
+      [{ resize: { width: size, height: size } }],
+      {
+        compress: 0.85,
+        format: ImageManipulator.SaveFormat.JPEG,
+      },
+    )
+
+    // Step 2: Further compress using react-native-compressor
+    const compressedUri = await Image.compress(resizedImage.uri, {
+      compressionMethod: "auto",
+      maxWidth: size,
+      maxHeight: size,
+      quality: 0.85,
+    })
+
+    // Get file size
+    const response = await fetch(compressedUri)
+    const blob = await response.blob()
+    const fileSize = blob.size
+
+    console.log(`Original size: ${imageAsset.fileSize || "unknown"}, Compressed size: ${fileSize}`)
+
+    return {
+      uri: compressedUri,
+      width: size,
+      height: size,
+      size: fileSize,
+      type: "image/jpeg",
+    }
+  } catch (error) {
+    console.error("Error optimizing profile photo:", error)
+    throw error
+  }
+}

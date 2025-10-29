@@ -76,6 +76,7 @@ export async function acceptInvitation(
 
 /**
  * Reject an invitation
+ * Sets status to "cancelled" (not "rejected" as that's not in the constraint)
  * @param invitationId - Invitation ID
  */
 export async function rejectInvitation(
@@ -84,7 +85,7 @@ export async function rejectInvitation(
   const { data, error } = await supabase
     .from("invitations")
     .update({
-      status: "rejected",
+      status: "cancelled",
     })
     .eq("id", invitationId)
     .select()
@@ -109,4 +110,66 @@ export async function removeParticipantFromChat(
     .eq("user_id", userId)
 
   return { error }
+}
+
+/**
+ * Get all pending invitations sent by a user
+ * @param userId - User ID who sent invitations
+ */
+export async function getSentInvitations(
+  userId: string,
+): Promise<DatabaseResponse<Invitation[]>> {
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("*")
+    .eq("invited_by", userId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+
+  return { data: data as Invitation[], error }
+}
+
+/**
+ * Get all pending invitations received by a user (by username)
+ * @param username - Username of the user who received invitations
+ */
+export async function getReceivedInvitations(
+  username: string,
+): Promise<DatabaseResponse<Invitation[]>> {
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("*")
+    .eq("invite_type", "username")
+    .eq("invite_value", username)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+
+  return { data: data as Invitation[], error }
+}
+
+/**
+ * Send a connection invitation to a user
+ * @param invitedBy - User ID sending the invitation
+ * @param inviteValue - Username of the user being invited
+ */
+export async function sendConnectionInvitation(
+  invitedBy: string,
+  inviteValue: string,
+): Promise<DatabaseResponse<Invitation>> {
+  const { data, error } = await supabase
+    .from("invitations")
+    .insert({
+      invited_by: invitedBy,
+      invite_type: "username",
+      invite_value: inviteValue,
+      invitation_context: "relationship",
+      status: "pending",
+      max_uses: 1,
+      use_count: 0,
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+    })
+    .select()
+    .single()
+
+  return { data: data as Invitation, error }
 }

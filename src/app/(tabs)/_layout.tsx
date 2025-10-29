@@ -1,13 +1,16 @@
 import { Redirect, Tabs } from "expo-router"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
+import { View, Text, StyleSheet } from "react-native"
 
 import { useAuth } from "@/hooks/useAuth"
+import { useContactsBadge } from "@/hooks/useContactsBadge"
 import { translate } from "@/i18n"
 import { useAppTheme } from "@/theme/context"
 
 export default function TabsLayout() {
   const { isAuthenticated, isLoading } = useAuth()
   const { theme } = useAppTheme()
+  const { badgeCount } = useContactsBadge()
 
   // If user is not authenticated, redirect to login
   if (!isLoading && !isAuthenticated) {
@@ -59,9 +62,17 @@ export default function TabsLayout() {
         name="contacts"
         options={{
           title: contactsTitle,
+          headerShown: false,
           tabBarLabel: contactsTitle,
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="contacts" size={size} color={color} />
+            <View style={{ position: "relative" }}>
+              <MaterialCommunityIcons name="contacts" size={size} color={color} />
+              {badgeCount > 0 && (
+                <View style={[styles.badge, { backgroundColor: theme.colors.palette.angry500 }]}>
+                  <Text style={styles.badgeText}>{badgeCount > 99 ? "99+" : badgeCount}</Text>
+                </View>
+              )}
+            </View>
           ),
           headerTitle: contactsTitle,
         }}
@@ -72,6 +83,7 @@ export default function TabsLayout() {
         name="settings"
         options={{
           title: settingsTitle,
+          headerShown: false,
           tabBarLabel: settingsTitle,
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="cog" size={size} color={color} />
@@ -82,3 +94,22 @@ export default function TabsLayout() {
     </Tabs>
   )
 }
+
+const styles = StyleSheet.create({
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "bold",
+  },
+})
