@@ -17,6 +17,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
+import { translate } from "@/i18n"
 import { useAuth } from "@/hooks/useAuth"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -35,17 +36,17 @@ import {
 } from "@/services/supabase/userConnections"
 import { getProfile, type Profile } from "@/services/supabase/profiles"
 import { fetchFromTable, supabase } from "@/services/supabase"
-
-const ALFRED_ID = "alfred" // Special ID for Alfred
+import { AGENTS_LIST, type Agent } from "@/config/agents"
 
 interface ContactItem {
   id: string
-  type: "alfred" | "sent-invitation" | "received-invitation" | "connection" | "other-user"
+  type: "agent" | "sent-invitation" | "received-invitation" | "connection" | "other-user"
   name: string
   username: string
-  avatar?: string
+  avatar?: string | any // Can be string URL or require() object for agents
+  description?: string // For agents
   hasRelationship?: boolean
-  data?: Invitation | UserConnection | Profile
+  data?: Invitation | UserConnection | Profile | Agent
   otherUserId?: string // For connections, the other user's ID
 }
 
@@ -360,22 +361,98 @@ export default function ContactsScreen() {
     }
   }
 
-  function handleContactPress(item: ContactItem) {
-    if (item.type === "alfred") {
-      // Navigate to Alfred chat
-      router.push("/chats/alfred")
+  async function handleContactPress(item: ContactItem) {
+    if (item.type === "agent") {
+      // Create or find existing chat with this agent
+      await handleAgentChatPress(item)
     } else if (item.type === "connection") {
       const connection = item.data as UserConnection
       if (!connection.connection_type) {
         // No relationship defined, go to relationship update
         router.push(`/contacts/${connection.id}/relationship`)
       } else {
-        // Has relationship, open DM chat
-        router.push(`/chats/${item.otherUserId}`)
+        // Has relationship, find or create DM chat
+        await handleConnectionChatPress(item.otherUserId!)
       }
     } else if (item.type === "other-user") {
       // Non-connection user, send invitation
       handleSendInvitation(item.data as Profile)
+    }
+  }
+
+  async function handleAgentChatPress(item: ContactItem) {
+    if (!user) return
+
+    try {
+      // Always create a new chat with the agent
+      const { data: newChat, error: chatError } = await supabase
+        .from("chats")
+        .insert({
+          type: "dm",
+          created_by: user.id,
+          participant_count: 1,
+          name: item.name,
+          alfred_enabled: true,
+          active_agent: item.username,
+          message_count: 0,
+        })
+        .select()
+        .single()
+
+      if (chatError) throw chatError
+
+      // Add user as participant
+      const { error: participantError } = await supabase.from("chat_participants").insert({
+        chat_id: newChat.id,
+        user_id: user.id,
+        role: "creator",
+      })
+
+      if (participantError) throw participantError
+
+      // Navigate to new chat
+      router.push(`/chats/${newChat.id}`)
+    } catch (error) {
+      console.error("Error creating agent chat:", error)
+      Alert.alert(translate("common:error"), "Failed to create chat with agent")
+    }
+  }
+
+  async function handleConnectionChatPress(otherUserId: string) {
+    if (!user) return
+
+    try {
+      // Always create a new chat with this connection
+      const { data: otherUserProfile } = await getProfile(otherUserId)
+
+      const { data: newChat, error: chatError } = await supabase
+        .from("chats")
+        .insert({
+          type: "dm",
+          created_by: user.id,
+          participant_count: 2,
+          name: otherUserProfile?.name || "Chat",
+          alfred_enabled: false,
+          message_count: 0,
+        })
+        .select()
+        .single()
+
+      if (chatError) throw chatError
+
+      // Add both users as participants
+      const { error: participantError } = await supabase.from("chat_participants").insert([
+        { chat_id: newChat.id, user_id: user.id, role: "creator" },
+        { chat_id: newChat.id, user_id: otherUserId, role: "member" },
+      ])
+
+      if (participantError) throw participantError
+
+      // Navigate to new chat
+      router.push(`/chats/${newChat.id}`)
+    } catch (error) {
+      console.error("Error creating DM chat:", error)
+      Alert.alert(translate("common:error"), "Failed to create chat")
     }
   }
 
@@ -452,14 +529,18 @@ export default function ContactsScreen() {
 
   // Build contact items array using filtered data
   const contactItems: ContactItem[] = [
-    // Always show Alfred first
-    {
-      id: ALFRED_ID,
-      type: "alfred",
-      name: "Alfred",
-      username: "alfred",
-      avatar: undefined, // Will use placeholder
-    },
+    // Always show all AI agents first
+    ...AGENTS_LIST.map(
+      (agent): ContactItem => ({
+        id: `agent-${agent.username}`,
+        type: "agent",
+        name: translate(agent.name),
+        username: agent.username,
+        avatar: agent.avatar,
+        description: translate(agent.description),
+        data: agent,
+      }),
+    ),
     // Sent invitations (filtered) - show invited user's profile
     ...filteredData.sentInvitations.map(
       (inv): ContactItem => ({
@@ -516,28 +597,36 @@ export default function ContactsScreen() {
 
   const renderContactItem = ({ item, index }: { item: ContactItem; index: number }) => {
     // Show section headers
+    const agentsCount = AGENTS_LIST.length
     let sectionHeader = null
-    if (index === 1 && filteredData.sentInvitations.length > 0) {
-      sectionHeader = renderSectionHeader("Sent Invitations")
+
+    if (index === 0) {
+      // AI Agents section header (before first agent)
+      sectionHeader = renderSectionHeader("AI Agents")
+    } else if (index === agentsCount && filteredData.sentInvitations.length > 0) {
+      sectionHeader = renderSectionHeader(translate("contacts:sections.sentInvitations"))
     } else if (
-      index === 1 + filteredData.sentInvitations.length &&
+      index === agentsCount + filteredData.sentInvitations.length &&
       filteredData.receivedInvitations.length > 0
     ) {
-      sectionHeader = renderSectionHeader("Invitations")
-    } else if (
-      index === 1 + filteredData.sentInvitations.length + filteredData.receivedInvitations.length &&
-      filteredData.connections.length > 0
-    ) {
-      sectionHeader = renderSectionHeader("Connections")
+      sectionHeader = renderSectionHeader(translate("contacts:sections.invitations"))
     } else if (
       index ===
-        1 +
+        agentsCount +
+          filteredData.sentInvitations.length +
+          filteredData.receivedInvitations.length &&
+      filteredData.connections.length > 0
+    ) {
+      sectionHeader = renderSectionHeader(translate("contacts:sections.connections"))
+    } else if (
+      index ===
+        agentsCount +
           filteredData.sentInvitations.length +
           filteredData.receivedInvitations.length +
           filteredData.connections.length &&
       filteredData.otherUsers.length > 0
     ) {
-      sectionHeader = renderSectionHeader("Other Users")
+      sectionHeader = renderSectionHeader(translate("contacts:sections.otherUsers"))
     }
 
     return (
@@ -549,28 +638,47 @@ export default function ContactsScreen() {
         >
           <View style={themed($avatarContainer)}>
             {item.avatar ? (
-              <Image source={{ uri: item.avatar }} style={themed($avatar)} resizeMode="cover" />
+              item.type === "agent" ? (
+                // Agent avatars are require() objects
+                <Image source={item.avatar} style={themed($avatar)} resizeMode="cover" />
+              ) : (
+                // User avatars are URL strings
+                <Image source={{ uri: item.avatar }} style={themed($avatar)} resizeMode="cover" />
+              )
             ) : (
               <View style={themed($avatarPlaceholder)}>
                 <MaterialCommunityIcons
-                  onPress={() => handleContactPress(item)}
-                  name={item.type === "alfred" ? "robot" : "account"}
+                  name={item.type === "agent" ? "robot" : "account"}
                   size={32}
                   color={theme.colors.palette.neutral100}
                 />
               </View>
             )}
           </View>
-
-          <View style={themed($contactContent)}>
-            <View style={themed($nameRow)}>
-              <Text text={item.name} style={themed($contactName)} numberOfLines={1} />
+          {item.type === "agent" ? (
+            <View style={themed($contactContent)}>
+              <View style={themed($nameRow)}>
+                <Text text={item.name} style={themed($contactName)} numberOfLines={1} />
+                <Text
+                  text={`@${item.username}`}
+                  style={themed($contactUsername)}
+                  numberOfLines={1}
+                />
+              </View>
+              {item.description && <Text text={item.description} style={themed($statusText)} />}
             </View>
-            <Text text={`@${item.username}`} style={themed($contactUsername)} numberOfLines={1} />
-            {item.type === "sent-invitation" && (
-              <Text text="Pending..." style={themed($statusText)} />
-            )}
-          </View>
+          ) : (
+            <View style={themed($contactContent)}>
+              <View style={themed($nameRow)}>
+                <Text text={item.name} style={themed($contactName)} numberOfLines={1} />
+              </View>
+              <Text text={`@${item.username}`} style={themed($contactUsername)} numberOfLines={1} />
+              {item.type === "sent-invitation" && (
+                <Text tx="contacts:status.pending" style={themed($statusText)} />
+              )}
+            </View>
+          )}
+
           {item.type === "connection" && !item.hasRelationship && (
             <MaterialCommunityIcons
               name="alert-circle"
@@ -648,13 +756,13 @@ export default function ContactsScreen() {
   return (
     <Screen preset="fixed" contentContainerStyle={themed($container)}>
       <View style={themed($header)}>
-        <Text text="Contacts" preset="heading" />
+        <Text tx="contacts:title" preset="heading" />
       </View>
       <View style={themed($searchContainer)}>
         <TextField
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Search contacts..."
+          placeholder={translate("contacts:search")}
           containerStyle={themed($searchField)}
           LeftAccessory={() => (
             <MaterialCommunityIcons

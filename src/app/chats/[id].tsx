@@ -31,11 +31,6 @@ import {
   fetchFromTable,
   executeQuery,
   getProfile,
-  getInvitationForChat,
-  acceptInvitation,
-  rejectInvitation,
-  removeParticipantFromChat,
-  type Invitation,
   getMessagesForChat,
   sendMessage as sendMessageToSupabase,
   markMessagesAsRead,
@@ -45,14 +40,9 @@ import {
   hasUserConnectionsForChat,
   hasChatContextCache,
 } from "@/services/supabase"
-import { RelationshipSelectionModal } from "@/components/RelationshipSelectionModal"
 import { AgentSelector } from "@/components/AgentSelector"
 import { MentionAutocomplete } from "@/components/MentionAutocomplete"
-import {
-  createConnectionInNeo4j,
-  processMessageWithAlfred,
-  initializeChatContext,
-} from "@/services/api/neo4j"
+import { processMessageWithAlfred, initializeChatContext } from "@/services/api/neo4j"
 import { DEFAULT_AGENT, type Agent, getAgentByUsername } from "@/config/agents"
 
 interface ChatMessage {
@@ -106,17 +96,6 @@ export default function ChatDetailScreen() {
   // FlatList ref for scrolling
   const flatListRef = useRef<FlatList>(null)
 
-  const [otherUser, setOtherUser] = useState<{ id: string; username: string } | null>(null)
-  const [isUpdatingConnection, setIsUpdatingConnection] = useState(false)
-
-  const [showRelationshipModal, setShowRelationshipModal] = useState(false)
-
-  // Invitation states
-  const [invitation, setInvitation] = useState<Invitation | null>(null) // Only for received invitations (Accept/Reject UI)
-  const [hasAnyInvitation, setHasAnyInvitation] = useState(false) // To hide action buttons
-  const [isInvitationLoading, setIsInvitationLoading] = useState(true)
-  const [isProcessingInvitation, setIsProcessingInvitation] = useState(false)
-
   // Image upload states
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null)
@@ -133,14 +112,6 @@ export default function ChatDetailScreen() {
     const loadChat = async () => {
       try {
         if (!id || !user) return
-
-        // Fetch current user's profile to get username
-        const { data: currentUserProfile } = await getProfile(user.id)
-        if (!currentUserProfile?.username) {
-          console.error("Current user profile or username not found")
-          setIsInvitationLoading(false)
-          return
-        }
 
         // Fetch chat
         const { data: chatData, error: chatError } = await fetchSingleFromTable("chats", "*", {
@@ -159,56 +130,6 @@ export default function ChatDetailScreen() {
             if (agent) {
               setSelectedAgent(agent)
             }
-          }
-
-          // Check for invitation (only for DM chats)
-          if (typedChatData.type === "dm") {
-            // Check for invitation sent TO me
-            const { data: receivedInvitation } = await getInvitationForChat(
-              id,
-              currentUserProfile.username,
-            )
-
-            // Check for invitation sent BY me (query by chat_id and invited_by)
-            const { data: sentInvitations } = await executeQuery<any[]>((client) =>
-              client
-                .from("invitations")
-                .select("*")
-                .eq("related_chat_id", id)
-                .eq("invited_by", user.id)
-                .in("status", ["pending", "rejected"])
-                .eq("invitation_context", "chat"),
-            )
-
-            // If I received a pending invitation, show accept/reject UI
-            if (
-              receivedInvitation &&
-              receivedInvitation.status === "pending" &&
-              receivedInvitation.invited_by !== user.id
-            ) {
-              setInvitation(receivedInvitation)
-              setHasAnyInvitation(true)
-              console.log("[ChatDetail] Received pending invitation, showing accept/reject UI")
-            }
-            // If I sent a pending/rejected invitation, hide buttons but don't show accept/reject UI
-            else if (sentInvitations && sentInvitations.length > 0) {
-              const sentInvitation = sentInvitations[0]
-              if (sentInvitation.status === "pending" || sentInvitation.status === "rejected") {
-                setHasAnyInvitation(true) // Hide buttons
-                setInvitation(null) // Don't show accept/reject UI
-                console.log(
-                  "[ChatDetail] Found sent invitation (pending/rejected), hiding action buttons",
-                )
-              }
-            } else {
-              // No invitations found
-              setHasAnyInvitation(false)
-              setInvitation(null)
-            }
-
-            setIsInvitationLoading(false)
-          } else {
-            setIsInvitationLoading(false)
           }
 
           // Fetch participants
@@ -250,24 +171,6 @@ export default function ChatDetailScreen() {
                 role: "member",
                 isAlfred: true,
               })
-            }
-
-            // Handle DM chat logic
-            if (typedChatData?.type === "dm" && enrichedParticipants.length === 1 && user) {
-              const otherParticipant = enrichedParticipants[0]
-              if (otherParticipant.user_id !== "system-alfred") {
-                // Get other participant's profile for username
-                const { data: otherProfile } = await getProfile(otherParticipant.user_id)
-
-                // Set other user (needed for relationship modal when manually triggered)
-                setOtherUser({
-                  id: otherParticipant.user_id,
-                  username: otherProfile?.username || otherParticipant.name,
-                })
-
-                // Don't automatically show RelationshipSelectionModal
-                // User will manually trigger it via "Edit Relationship" button
-              }
             }
 
             setParticipants(enrichedParticipants)
@@ -697,90 +600,6 @@ export default function ChatDetailScreen() {
     setMentionQuery("")
   }
 
-  const handleEditRelationship = () => {
-    if (!chat || chat.type !== "dm" || !otherUser) return
-
-    // Check if there's a pending invitation
-    if (invitation && invitation.status === "pending") {
-      Alert.alert("Pending Invitation", "Please accept or reject the invitation first")
-      return
-    }
-
-    // Show relationship modal
-    setShowRelationshipModal(true)
-  }
-
-  const handleAcceptInvitation = async () => {
-    if (!invitation || !user || !otherUser) return
-
-    Alert.alert("Accept Invitation", "Do you want to accept this invitation and start chatting?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Accept",
-        onPress: async () => {
-          setIsProcessingInvitation(true)
-          try {
-            // Accept the invitation
-            const { error: acceptError } = await acceptInvitation(invitation.id, user.id)
-            if (acceptError) throw acceptError
-
-            // Clear invitation states - now buttons will be visible
-            setInvitation(null)
-            setHasAnyInvitation(false)
-
-            // Don't automatically show relationship modal
-            // User will click "Edit Relationship" button when ready
-            Alert.alert(
-              "Invitation Accepted",
-              "You can now chat freely. Use 'Edit Relationship' button to define your relationship.",
-            )
-          } catch (error) {
-            console.error("Error accepting invitation:", error)
-            Alert.alert("Error", "Failed to accept invitation. Please try again.")
-          } finally {
-            setIsProcessingInvitation(false)
-          }
-        },
-      },
-    ])
-  }
-
-  const handleRejectInvitation = async () => {
-    if (!invitation || !user || !id) return
-
-    Alert.alert(
-      "Reject Invitation",
-      "Are you sure you want to reject this invitation? You will be removed from this chat.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reject",
-          style: "destructive",
-          onPress: async () => {
-            setIsProcessingInvitation(true)
-            try {
-              // Reject the invitation
-              const { error: rejectError } = await rejectInvitation(invitation.id)
-              if (rejectError) throw rejectError
-
-              // Remove user from chat participants
-              const { error: removeError } = await removeParticipantFromChat(id, user.id)
-              if (removeError) throw removeError
-
-              // Navigate back to chats list
-              router.replace("/(tabs)/chats")
-            } catch (error) {
-              console.error("Error rejecting invitation:", error)
-              Alert.alert("Error", "Failed to reject invitation. Please try again.")
-            } finally {
-              setIsProcessingInvitation(false)
-            }
-          },
-        },
-      ],
-    )
-  }
-
   const handlePickImage = async () => {
     try {
       // Pick image from library
@@ -1033,46 +852,6 @@ export default function ChatDetailScreen() {
     }
   }
 
-  const handleRelationshipSelected = async (data: {
-    relationshipTypeId: string
-    neo4jEdgeLabel: string
-    relationshipSubtype?: string
-    relationshipSince?: string
-  }) => {
-    if (!otherUser || !user?.id) return
-
-    setIsUpdatingConnection(true)
-    try {
-      console.log("[handleRelationshipSelected] Creating/updating connection via Neo4j API:", data)
-
-      // Prepare metadata if subtype exists
-      const metadata = data.relationshipSubtype ? { subtype: data.relationshipSubtype } : undefined
-
-      // Call Neo4j API - this will handle both Neo4j and Supabase updates
-      const result = await createConnectionInNeo4j({
-        user_id_1: user.id,
-        user_id_2: otherUser.id,
-        relationship_type: data.neo4jEdgeLabel, // Use Neo4j edge label (e.g., "SPOUSE_OF", "PARENT_OF")
-        relationship_metadata: metadata,
-        relationship_since: data.relationshipSince,
-      })
-
-      if (!result.success) {
-        console.error("[handleRelationshipSelected] Neo4j API error:", result.error)
-        throw new Error(result.error || "Failed to create connection")
-      }
-
-      console.log("[handleRelationshipSelected] Connection created successfully:", result.data)
-      Alert.alert("Success", "Relationship saved successfully")
-      setShowRelationshipModal(false)
-    } catch (error) {
-      console.error("[handleRelationshipSelected] Error:", error)
-      Alert.alert("Error", error instanceof Error ? error.message : "Failed to save relationship")
-    } finally {
-      setIsUpdatingConnection(false)
-    }
-  }
-
   // Typing Indicator Component
   const TypingIndicator = () => {
     const dot1 = useRef(new Animated.Value(0)).current
@@ -1314,14 +1093,12 @@ export default function ChatDetailScreen() {
         </View>
 
         {/* Settings Button */}
-        {!hasAnyInvitation && (
-          <Pressable
-            onPress={() => router.push(`/chats/${id}/settings`)}
-            style={themed($settingsButton)}
-          >
-            <MaterialCommunityIcons name="cog" size={24} color={theme.colors.text} />
-          </Pressable>
-        )}
+        <Pressable
+          onPress={() => router.push(`/chats/${id}/settings`)}
+          style={themed($settingsButton)}
+        >
+          <MaterialCommunityIcons name="cog" size={24} color={theme.colors.text} />
+        </Pressable>
       </View>
 
       {/* Messages List */}
@@ -1364,58 +1141,15 @@ export default function ChatDetailScreen() {
         />
       )}
 
-      {/* Invitation Actions or Message Input */}
-      {invitation && !isInvitationLoading ? (
-        <View style={themed($invitationContainer)}>
-          <View style={themed($invitationContent)}>
-            <MaterialCommunityIcons
-              name="email-outline"
-              size={24}
-              color={theme.colors.tint}
-              style={{ marginBottom: 8 }}
-            />
-            <Text
-              text="You have been invited to this chat"
-              preset="subheading"
-              style={themed($invitationTitle)}
-            />
-            <Text
-              text="Accept the invitation to start chatting"
-              style={[themed($invitationText), { color: theme.colors.textDim }]}
-            />
-          </View>
-          <View style={themed($invitationButtons)}>
-            <Pressable
-              onPress={handleRejectInvitation}
-              disabled={isProcessingInvitation}
-              style={({ pressed }) => [
-                themed($invitationButton),
-                themed($rejectButton),
-                pressed && { opacity: 0.7 },
-                isProcessingInvitation && { opacity: 0.5 },
-              ]}
-            >
-              <Text text="Reject" style={[themed($buttonText), { color: theme.colors.error }]} />
-            </Pressable>
-            <Pressable
-              onPress={handleAcceptInvitation}
-              disabled={isProcessingInvitation}
-              style={({ pressed }) => [
-                themed($invitationButton),
-                themed($acceptButton),
-                pressed && { opacity: 0.7 },
-                isProcessingInvitation && { opacity: 0.5 },
-              ]}
-            >
-              <Text
-                text="Accept"
-                style={[themed($buttonText), { color: theme.colors.palette.neutral100 }]}
-              />
-            </Pressable>
-          </View>
+      {/* Message Input */}
+      <View style={themed($inputContainer)}>
+        {/* Agent Selector - Above input container */}
+        <View style={themed($agentSelectorWrapper)}>
+          <AgentSelector selectedAgent={selectedAgent} onSelectAgent={handleSelectAgent} />
         </View>
-      ) : (
-        <View style={themed($inputContainer)}>
+
+        {/* Input Content Container */}
+        <View style={themed($inputContentContainer)}>
           {/* Image Preview */}
           {selectedImageUri && (
             <View style={themed($imagePreviewContainer)}>
@@ -1437,11 +1171,6 @@ export default function ChatDetailScreen() {
                 <MentionAutocomplete query={mentionQuery} onSelectMention={handleSelectMention} />
               </View>
             )}
-
-            {/* Agent Selector */}
-            <View style={themed($agentSelectorWrapper)}>
-              <AgentSelector selectedAgent={selectedAgent} onSelectAgent={handleSelectAgent} />
-            </View>
 
             <View style={themed($inputRow)}>
               <Pressable
@@ -1471,7 +1200,9 @@ export default function ChatDetailScreen() {
               />
               <Pressable
                 onPress={handleSendMessage}
-                disabled={(!messageText.trim() && !selectedImageUri) || isSending || isUploadingImage}
+                disabled={
+                  (!messageText.trim() && !selectedImageUri) || isSending || isUploadingImage
+                }
                 style={({ pressed }) => [
                   themed($sendButton),
                   pressed && { opacity: 0.7 },
@@ -1485,13 +1216,7 @@ export default function ChatDetailScreen() {
             </View>
           </View>
         </View>
-      )}
-      <RelationshipSelectionModal
-        visible={showRelationshipModal}
-        onSelect={handleRelationshipSelected}
-        onCancel={() => setShowRelationshipModal(false)}
-        isLoading={isUpdatingConnection}
-      />
+      </View>
     </Screen>
   )
 }
@@ -1502,7 +1227,7 @@ const $container: ThemedStyle<ViewStyle> = () => ({
 
 const $header: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   paddingHorizontal: spacing.md,
-  paddingVertical: spacing.md,
+  paddingVertical: spacing.xs,
   borderBottomWidth: 1,
   borderBottomColor: colors.border,
   flexDirection: "row",
@@ -1533,19 +1258,18 @@ const $avatarWrapper: ThemedStyle<ViewStyle> = ({ colors }) => ({
   borderWidth: 2,
   borderColor: colors.background,
   borderRadius: 18,
-  marginBottom: 4,
 })
 
 const $participantAvatarSmall: ThemedStyle<ImageStyle> = () => ({
-  width: 36,
-  height: 36,
-  borderRadius: 18,
+  width: 40,
+  height: 40,
+  borderRadius: 20,
 })
 
 const $participantAvatarSmallPlaceholder: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  width: 36,
-  height: 36,
-  borderRadius: 18,
+  width: 40,
+  height: 40,
+  borderRadius: 20,
   backgroundColor: colors.palette.neutral300,
   justifyContent: "center",
   alignItems: "center",
@@ -1612,8 +1336,19 @@ const $statusIcon: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.xxs,
 })
 
-const $inputContainer: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
+const $inputContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.md,
+  position: "relative",
+})
+
+const $agentSelectorWrapper: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  position: "absolute",
+  top: -45,
+  right: spacing.md,
+  zIndex: 1000,
+})
+
+const $inputContentContainer: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   paddingVertical: spacing.sm,
   borderTopWidth: 1,
   borderTopColor: colors.border,
@@ -1650,11 +1385,6 @@ const $mentionAutocompleteWrapper: ThemedStyle<ViewStyle> = () => ({
   zIndex: 1000,
 })
 
-const $agentSelectorWrapper: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  alignItems: "flex-end",
-  paddingBottom: spacing.xs,
-})
-
 const $inputRow: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   flexDirection: "row",
   alignItems: "flex-end",
@@ -1682,58 +1412,6 @@ const $input: ThemedStyle<any> = ({ spacing, colors, typography }) => ({
 const $sendButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.sm,
   paddingVertical: spacing.sm,
-})
-
-const $invitationContainer: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
-  paddingHorizontal: spacing.md,
-  paddingVertical: spacing.lg,
-  borderTopWidth: 1,
-  borderTopColor: colors.border,
-  backgroundColor: colors.background,
-})
-
-const $invitationContent: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  alignItems: "center",
-  marginBottom: spacing.md,
-})
-
-const $invitationTitle: ThemedStyle<any> = ({ spacing }) => ({
-  textAlign: "center",
-  marginBottom: spacing.xs,
-})
-
-const $invitationText: ThemedStyle<any> = () => ({
-  textAlign: "center",
-  fontSize: 14,
-})
-
-const $invitationButtons: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  flexDirection: "row",
-  gap: spacing.sm,
-})
-
-const $invitationButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  flex: 1,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.lg,
-  borderRadius: 8,
-  alignItems: "center",
-  justifyContent: "center",
-})
-
-const $rejectButton: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  backgroundColor: colors.palette.neutral200,
-  borderWidth: 1,
-  borderColor: colors.error,
-})
-
-const $acceptButton: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  backgroundColor: colors.tint,
-})
-
-const $buttonText: ThemedStyle<any> = () => ({
-  fontSize: 16,
-  fontWeight: "600",
 })
 
 const $loadingMoreContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({

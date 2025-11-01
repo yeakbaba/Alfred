@@ -19,12 +19,22 @@ module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
 
   return {
     ...config,
+    android: {
+      ...config.android,
+      permissions: [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS",
+      ],
+    },
     ios: {
       ...config.ios,
       infoPlist: {
         NSPhotoLibraryUsageDescription: "Alfred needs access to your photo library to send images in chats.",
         NSPhotoLibraryAddUsageDescription: "Alfred needs permission to save images to your photo library.",
         NSCameraUsageDescription: "Alfred needs access to your camera to take photos for your profile and to send in chats.",
+        NSUserNotificationsUsageDescription: "Alfred needs permission to send you notifications about new messages.",
       },
       // This privacyManifests is to get you started.
       // See Expo's guide on apple privacy manifests here:

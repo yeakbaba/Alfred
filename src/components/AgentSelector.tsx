@@ -1,13 +1,5 @@
 import { useState } from "react"
-import {
-  View,
-  ViewStyle,
-  Pressable,
-  Image,
-  ImageStyle,
-  TextStyle,
-  Animated,
-} from "react-native"
+import { View, ViewStyle, Pressable, Image, ImageStyle, TextStyle, Animated } from "react-native"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 
 import { Text } from "@/components/Text"
@@ -41,106 +33,98 @@ export function AgentSelector({ selectedAgent, onSelectAgent }: AgentSelectorPro
 
   const handleSelectAgent = (agent: Agent) => {
     onSelectAgent(agent)
+  }
+
+  const handleSelectFromList = (agent: Agent) => {
+    onSelectAgent(agent)
     toggleExpanded()
   }
 
-  const listHeight = animation.interpolate({
+  const listOpacity = animation.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, AGENTS_LIST.length * 70], // 70px per item
+    outputRange: [0, 1],
   })
 
-  const chevronRotation = animation.interpolate({
+  const listTranslateY = animation.interpolate({
     inputRange: [0, 1],
-    outputRange: ["0deg", "180deg"],
+    outputRange: [-20, 0],
   })
 
   return (
     <View style={themed($container)}>
       {/* Expanded List */}
       {isExpanded && (
-        <Animated.View style={[themed($expandedList), { height: listHeight }]}>
-          <View style={themed($listContainer)}>
-            {/* Collapse Button */}
-            <Pressable onPress={toggleExpanded} style={themed($collapseButton)}>
-              <MaterialCommunityIcons
-                name="chevron-down"
-                size={20}
-                color={theme.colors.textDim}
-              />
-            </Pressable>
-
-            {/* Agent List */}
-            {AGENTS_LIST.map((agent) => (
-              <Pressable
-                key={agent.id}
-                onPress={() => handleSelectAgent(agent)}
-                style={[
-                  themed($agentItem),
-                  agent.id === selectedAgent.id && themed($agentItemSelected),
-                ]}
-              >
-                <Image source={agent.avatar} style={themed($agentAvatar)} resizeMode="cover" />
-                <View style={themed($agentInfo)}>
-                  <View style={themed($agentHeader)}>
-                    <Text
-                      text={translate(agent.name)}
-                      style={themed($agentName)}
-                      numberOfLines={1}
-                    />
-                    <Text
-                      text={`@${agent.username}`}
-                      style={themed($agentUsername)}
-                      numberOfLines={1}
-                    />
-                  </View>
+        <Animated.View
+          style={[
+            themed($expandedList),
+            {
+              opacity: listOpacity,
+              transform: [{ translateY: listTranslateY }],
+            },
+          ]}
+        >
+          {/* Agent List */}
+          {AGENTS_LIST.map((agent) => (
+            <Pressable
+              key={agent.id}
+              onPress={() => handleSelectFromList(agent)}
+              style={[
+                themed($agentItem),
+                agent.id === selectedAgent.id && themed($agentItemSelected),
+              ]}
+            >
+              <View style={themed($agentInfo)}>
+                <View style={themed($agentHeader)}>
+                  <Text text={translate(agent.name)} style={themed($agentName)} numberOfLines={1} />
                   <Text
-                    text={translate(agent.description)}
-                    style={themed($agentDescription)}
+                    text={`@${agent.username}`}
+                    style={themed($agentUsername)}
                     numberOfLines={1}
                   />
                 </View>
-              </Pressable>
-            ))}
-          </View>
+                <Text
+                  text={translate(agent.description)}
+                  style={themed($agentDescription)}
+                  numberOfLines={1}
+                />
+              </View>
+              <Image source={agent.avatar} style={themed($agentAvatar)} resizeMode="cover" />
+            </Pressable>
+          ))}
         </Animated.View>
       )}
 
-      {/* Selected Agent Display */}
-      <Pressable onPress={toggleExpanded} style={themed($selectedAgentContainer)}>
-        <View style={themed($selectedAgentContent)}>
-          <Image
-            source={selectedAgent.avatar}
-            style={themed($selectedAvatar)}
-            resizeMode="cover"
+      {/* Selected Agent Display - Avatar and Chevron as separate buttons */}
+      <View style={themed($selectedAgentRow)}>
+        <Pressable onPress={() => handleSelectAgent(selectedAgent)} style={themed($selectedAgentButton)}>
+          <Image source={selectedAgent.avatar} style={themed($selectedAvatar)} resizeMode="cover" />
+        </Pressable>
+        <Pressable onPress={toggleExpanded} style={themed($chevronButton)}>
+          <MaterialCommunityIcons
+            name={isExpanded ? "chevron-down" : "chevron-up"}
+            size={20}
+            color={theme.colors.text}
           />
-          <Text
-            text={translate(selectedAgent.name)}
-            style={themed($selectedName)}
-            numberOfLines={1}
-          />
-        </View>
-
-        <Animated.View style={{ transform: [{ rotate: chevronRotation }] }}>
-          <MaterialCommunityIcons name="chevron-up" size={20} color={theme.colors.text} />
-        </Animated.View>
-      </Pressable>
+        </Pressable>
+      </View>
     </View>
   )
 }
 
 const $container: ThemedStyle<ViewStyle> = () => ({
   position: "relative",
+  alignItems: "flex-end",
 })
 
 const $expandedList: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
   position: "absolute",
   bottom: "100%",
   right: 0,
-  width: 300,
+  width: 240,
   backgroundColor: colors.background,
   borderRadius: 12,
   marginBottom: spacing.xs,
-  overflow: "hidden",
+  padding: spacing.xs,
   shadowColor: "#000",
   shadowOffset: { width: 0, height: -2 },
   shadowOpacity: 0.1,
@@ -150,22 +134,22 @@ const $expandedList: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
   borderColor: colors.border,
 })
 
-const $listContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  padding: spacing.xs,
-})
-
 const $collapseButton: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   alignItems: "center",
   paddingVertical: spacing.xs,
+  width: 40,
+  height: 40,
+  justifyContent: "center",
+  alignSelf: "flex-end",
 })
 
-const $agentItem: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
+const $agentItem: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
   alignItems: "center",
-  padding: spacing.sm,
+  paddingHorizontal: spacing.sm,
+  paddingVertical: spacing.xxs,
   borderRadius: 8,
   gap: spacing.sm,
-  marginVertical: spacing.xxs,
 })
 
 const $agentItemSelected: ThemedStyle<ViewStyle> = ({ colors }) => ({
@@ -204,31 +188,30 @@ const $agentDescription: ThemedStyle<TextStyle> = ({ colors }) => ({
   color: colors.textDim,
 })
 
-const $selectedAgentContainer: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
+const $selectedAgentRow: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
   alignItems: "center",
-  justifyContent: "space-between",
-  backgroundColor: colors.palette.neutral200,
-  paddingHorizontal: spacing.sm,
-  paddingVertical: spacing.xs,
-  borderRadius: 20,
   gap: spacing.xs,
 })
 
-const $selectedAgentContent: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.xs,
-  flex: 1,
+const $selectedAgentButton: ThemedStyle<ViewStyle> = () => ({
+  width: 40,
+  height: 40,
 })
 
 const $selectedAvatar: ThemedStyle<ImageStyle> = () => ({
-  width: 28,
-  height: 28,
-  borderRadius: 14,
+  width: 40,
+  height: 40,
+  borderRadius: 20,
 })
 
-const $selectedName: ThemedStyle<TextStyle> = () => ({
-  fontSize: 13,
-  fontWeight: "500",
+const $chevronButton: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: colors.background,
+  justifyContent: "center",
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: colors.border,
 })

@@ -12,12 +12,15 @@ import fr from "./fr"
 import hi from "./hi"
 import ja from "./ja"
 import ko from "./ko"
+import tr from "./tr"
+import { loadString, saveString } from "@/utils/storage"
 
+const LANGUAGE_KEY = "app-language"
 const fallbackLocale = "en-US"
 
 const systemLocales = Localization.getLocales()
 
-const resources = { ar, en, ko, es, fr, ja, hi }
+const resources = { ar, en, ko, es, fr, ja, hi, tr }
 const supportedTags = Object.keys(resources)
 
 // Checks to see if the device locale matches any of the supported locales
@@ -33,7 +36,21 @@ const pickSupportedLocale: () => Localization.Locale | undefined = () => {
 
 const locale = pickSupportedLocale()
 
+// Get saved language preference from storage
+const getSavedLanguage = (): string | null => {
+  return loadString(LANGUAGE_KEY)
+}
+
+// Save language preference to storage
+export const saveLanguagePreference = (languageCode: string): void => {
+  saveString(LANGUAGE_KEY, languageCode)
+}
+
 export let isRTL = false
+
+// Determine initial language: saved preference > system locale > fallback
+const savedLanguage = getSavedLanguage()
+const initialLanguage = savedLanguage || locale?.languageTag || fallbackLocale
 
 // Need to set RTL ASAP to ensure the app is rendered correctly. Waiting for i18n to init is too late.
 if (locale?.languageTag && locale?.textDirection === "rtl") {
@@ -48,7 +65,7 @@ export const initI18n = async () => {
 
   await i18n.init({
     resources,
-    lng: locale?.languageTag ?? fallbackLocale,
+    lng: initialLanguage,
     fallbackLng: fallbackLocale,
     interpolation: {
       escapeValue: false,

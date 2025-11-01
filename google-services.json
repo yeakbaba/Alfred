@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "153384295177",
+    "project_id": "alfred-the-family-butler",
+    "storage_bucket": "alfred-the-family-butler.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153384295177:android:2d743d984971edef4091d8",
+        "android_client_info": {
+          "package_name": "com.mosaic.alfredapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCOaBaLCbQVR24XC0UFd2Bti2j1qHlOlKU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

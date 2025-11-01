@@ -1,3 +1,5 @@
+import avatars from "../../assets/images/avatars"
+
 export interface Agent {
   id: string
   username: string
@@ -12,7 +14,7 @@ export const AGENTS: Record<string, Agent> = {
     id: "alfred",
     username: "alfred",
     name: "agents:alfred.name",
-    avatar: require("@/assets/images/avatars/alfred.jpg"),
+    avatar: avatars.alfred,
     description: "agents:alfred.description",
     color: "#4A90E2",
   },
@@ -20,7 +22,7 @@ export const AGENTS: Record<string, Agent> = {
     id: "max",
     username: "max",
     name: "agents:max.name",
-    avatar: require("@/assets/images/avatars/max.jpg"),
+    avatar: avatars.max,
     description: "agents:max.description",
     color: "#E94B3C",
   },
@@ -28,7 +30,7 @@ export const AGENTS: Record<string, Agent> = {
     id: "alice",
     username: "alice",
     name: "agents:alice.name",
-    avatar: require("@/assets/images/avatars/alice.jpg"),
+    avatar: avatars.alice,
     description: "agents:alice.description",
     color: "#6BCF7F",
   },
@@ -36,7 +38,7 @@ export const AGENTS: Record<string, Agent> = {
     id: "wes",
     username: "wes",
     name: "agents:wes.name",
-    avatar: require("@/assets/images/avatars/wes.jpg"),
+    avatar: avatars.wes,
     description: "agents:wes.description",
     color: "#F5A623",
   },
@@ -44,7 +46,7 @@ export const AGENTS: Record<string, Agent> = {
     id: "rosa",
     username: "rosa",
     name: "agents:rosa.name",
-    avatar: require("@/assets/images/avatars/rosa.jpg"),
+    avatar: avatars.rosa,
     description: "agents:rosa.description",
     color: "#E91E63",
   },

@@ -136,13 +136,24 @@ export default function ChatSettingsScreen() {
     try {
       setAddingParticipant(true)
 
-      const { error } = await supabase.from("chat_participants").insert({
+      // Add participant
+      const { error: participantError } = await supabase.from("chat_participants").insert({
         chat_id: id,
         user_id: connectionId,
         role: "member",
       })
 
-      if (error) throw error
+      if (participantError) throw participantError
+
+      // Update chat metadata: increment participant_count
+      const { error: updateError } = await supabase
+        .from("chats")
+        .update({
+          participant_count: (chat?.participant_count || 0) + 1,
+        })
+        .eq("id", id)
+
+      if (updateError) throw updateError
 
       Alert.alert("Success", "Participant added successfully")
       setShowAddParticipant(false)
@@ -168,13 +179,22 @@ export default function ChatSettingsScreen() {
           onPress: async () => {
             try {
               // Update participant to inactive (set left_at to mark as inactive)
-              const { error } = await supabase
+              const { error: participantError } = await supabase
                 .from("chat_participants")
                 .update({ left_at: new Date().toISOString() })
                 .eq("chat_id", id)
                 .eq("user_id", user?.id)
 
-              if (error) throw error
+              if (participantError) throw participantError
+
+              // Update chat metadata: decrement participant_count
+              await supabase
+                .from("chats")
+                .update({ participant_count: Math.max((chat?.participant_count || 1) - 1, 0) } as any)
+                .eq("id", id)
+                .then(({ error: updateError }) => {
+                  if (updateError) throw updateError
+                })
 
               router.replace("/(tabs)/chats")
             } catch (error) {

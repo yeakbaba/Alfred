@@ -50,12 +50,10 @@ const $container: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
   position: "absolute",
   bottom: "100%",
   left: 0,
-  right: 0,
   backgroundColor: colors.background,
   borderRadius: 12,
   marginBottom: spacing.xs,
   padding: spacing.xs,
-  maxHeight: 200,
   shadowColor: "#000",
   shadowOffset: { width: 0, height: -2 },
   shadowOpacity: 0.1,
@@ -68,7 +66,6 @@ const $container: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
 const $mentionItem: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
   alignItems: "center",
-  padding: spacing.sm,
   borderRadius: 8,
   gap: spacing.sm,
 })
@@ -79,9 +76,7 @@ const $avatar: ThemedStyle<ImageStyle> = () => ({
   borderRadius: 16,
 })
 
-const $agentInfo: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})
+const $agentInfo: ThemedStyle<ViewStyle> = () => ({})
 
 const $name: ThemedStyle<TextStyle> = () => ({
   fontSize: 14,

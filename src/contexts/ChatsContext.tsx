@@ -7,6 +7,13 @@ import {
 } from "@/services/supabase"
 import { formatDistanceToNow } from "date-fns"
 
+export interface ChatParticipant {
+  user_id: string
+  name: string
+  first_name?: string
+  avatar_url?: string
+}
+
 export interface ChatItem {
   id: string
   name: string
@@ -17,7 +24,9 @@ export interface ChatItem {
   unreadCount: number
   isOnline?: boolean
   participantCount?: number
-  alfredEnabled?: boolean
+  activeAgent?: string // 'alfred', 'max', 'alice', 'wes', 'rosa'
+  participants?: ChatParticipant[] // All participants except current user
+  type?: string // 'dm' or 'group'
 }
 
 interface ChatsContextType {
@@ -81,32 +90,48 @@ export function ChatsProvider({ children }: { children: React.ReactNode }) {
         chatsData.map(async (chat) => {
           const participant = chatParticipants.find((cp) => cp.chat_id === chat.id)
 
-          // For DM chats, get the other participant's name
-          let chatName = chat.name || "Chat"
-          let avatar = chat.avatar_url
+          // Get all participants except current user
+          const { data: otherParticipantsData } = await executeQuery<any[]>((client) =>
+            client
+              .from("chat_participants")
+              .select("user_id")
+              .eq("chat_id", chat.id)
+              .neq("user_id", user.id),
+          )
 
-          if (chat.type === "dm") {
-            const { data: otherParticipants } = await executeQuery<any[]>((client) =>
-              client
-                .from("chat_participants")
-                .select("user_id")
-                .eq("chat_id", chat.id)
-                .neq("user_id", user.id)
-                .limit(1),
-            )
+          // Fetch profiles for all participants
+          const participants: ChatParticipant[] = []
+          if (otherParticipantsData && otherParticipantsData.length > 0) {
+            for (const p of otherParticipantsData) {
+              // Skip system-alfred
+              if (p.user_id === "system-alfred") continue
 
-            if (otherParticipants && otherParticipants.length > 0) {
               const { data: profile } = await fetchSingleFromTable<any>(
                 "profiles",
                 "name, avatar_url",
-                { id: otherParticipants[0].user_id },
+                { id: p.user_id },
               )
 
               if (profile) {
-                chatName = profile.name || "Unknown"
-                avatar = profile.avatar_url
+                // Extract first name (before first space)
+                const firstName = profile.name?.split(" ")[0] || profile.name
+                participants.push({
+                  user_id: p.user_id,
+                  name: profile.name || "Unknown",
+                  first_name: firstName,
+                  avatar_url: profile.avatar_url,
+                })
               }
             }
+          }
+
+          // For DM chats with single participant, use their info
+          let chatName = chat.name || "Chat"
+          let avatar = chat.avatar_url
+
+          if (chat.type === "dm" && participants.length === 1) {
+            chatName = participants[0].name
+            avatar = participants[0].avatar_url
           }
 
           return {
@@ -122,7 +147,9 @@ export function ChatsProvider({ children }: { children: React.ReactNode }) {
               : 0,
             unreadCount: participant?.unread_count || 0,
             participantCount: chat.participant_count,
-            alfredEnabled: chat.alfred_enabled || false,
+            activeAgent: chat.active_agent,
+            participants,
+            type: chat.type,
           }
         }),
       )
@@ -161,32 +188,48 @@ export function ChatsProvider({ children }: { children: React.ReactNode }) {
           { chat_id: chatId, user_id: user.id },
         )
 
-        // For DM chats, get the other participant's name
-        let chatName = chatData.name || "Chat"
-        let avatar = chatData.avatar_url
+        // Get all participants except current user
+        const { data: otherParticipantsData } = await executeQuery<any[]>((client) =>
+          client
+            .from("chat_participants")
+            .select("user_id")
+            .eq("chat_id", chatId)
+            .neq("user_id", user.id),
+        )
 
-        if (chatData.type === "dm") {
-          const { data: otherParticipants } = await executeQuery<any[]>((client) =>
-            client
-              .from("chat_participants")
-              .select("user_id")
-              .eq("chat_id", chatId)
-              .neq("user_id", user.id)
-              .limit(1),
-          )
+        // Fetch profiles for all participants
+        const participants: ChatParticipant[] = []
+        if (otherParticipantsData && otherParticipantsData.length > 0) {
+          for (const p of otherParticipantsData) {
+            // Skip system-alfred
+            if (p.user_id === "system-alfred") continue
 
-          if (otherParticipants && otherParticipants.length > 0) {
             const { data: profile } = await fetchSingleFromTable<any>(
               "profiles",
               "name, avatar_url",
-              { id: otherParticipants[0].user_id },
+              { id: p.user_id },
             )
 
             if (profile) {
-              chatName = profile.name || "Unknown"
-              avatar = profile.avatar_url
+              // Extract first name (before first space)
+              const firstName = profile.name?.split(" ")[0] || profile.name
+              participants.push({
+                user_id: p.user_id,
+                name: profile.name || "Unknown",
+                first_name: firstName,
+                avatar_url: profile.avatar_url,
+              })
             }
           }
+        }
+
+        // For DM chats with single participant, use their info
+        let chatName = chatData.name || "Chat"
+        let avatar = chatData.avatar_url
+
+        if (chatData.type === "dm" && participants.length === 1) {
+          chatName = participants[0].name
+          avatar = participants[0].avatar_url
         }
 
         const updatedChat: ChatItem = {
@@ -202,7 +245,9 @@ export function ChatsProvider({ children }: { children: React.ReactNode }) {
             : 0,
           unreadCount: participant?.unread_count || 0,
           participantCount: chatData.participant_count,
-          alfredEnabled: chatData.alfred_enabled || false,
+          activeAgent: chatData.active_agent,
+          participants,
+          type: chatData.type,
         }
 
         // Update chats list

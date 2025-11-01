@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { View, ViewStyle, Linking, Pressable, Image, ActivityIndicator, Text as RNText } from "react-native"
 import Markdown from "react-native-markdown-display"
 import { Text } from "@/components/Text"
@@ -23,6 +23,9 @@ interface URLPreview {
 
 // URL regex pattern
 const URL_REGEX = /(https?:\/\/[^\s]+)/g
+
+// Mention regex pattern
+const MENTION_REGEX = /@(\w+)/g
 
 /**
  * Extract URLs from text content
@@ -142,6 +145,14 @@ export const MessageContent: React.FC<MessageContentProps> = ({
   const [imageError, setImageError] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
 
+  // Track how many mentions have been rendered (reset on content change)
+  const mentionCountRef = useRef(0)
+
+  // Reset mention count when content changes
+  useEffect(() => {
+    mentionCountRef.current = 0
+  }, [content])
+
   // Reset image loading state when content changes
   useEffect(() => {
     if (contentType === "image") {
@@ -217,52 +228,93 @@ export const MessageContent: React.FC<MessageContentProps> = ({
     )
   }
 
-  // Custom text renderer to make plain URLs clickable
+  // Custom text renderer to make plain URLs clickable and style mentions
   const renderText = (node: any, children: any, parent: any, styles: any) => {
     const text = node.content
-    const urls = text.match(URL_REGEX)
 
-    if (!urls) {
+    // Find all URLs and mentions
+    const urlMatches = Array.from(text.matchAll(URL_REGEX))
+    const mentionMatches = Array.from(text.matchAll(MENTION_REGEX))
+
+    // If no URLs or mentions, return plain text
+    if (urlMatches.length === 0 && mentionMatches.length === 0) {
       return <RNText key={node.key} style={styles.text}>{text}</RNText>
     }
 
-    // Split text by URLs and render them as clickable links
+    // Combine all matches and sort by index
+    const allMatches = [
+      ...urlMatches.map(m => ({ type: 'url', match: m[0], index: m.index! })),
+      ...mentionMatches.map((m) => {
+        const currentCount = mentionCountRef.current
+        mentionCountRef.current += 1
+        return {
+          type: 'mention',
+          match: m[0],
+          username: m[1],
+          index: m.index!,
+          isActive: currentCount === 0 // Only the very first mention is active
+        }
+      })
+    ].sort((a, b) => a.index - b.index)
+
+    // Split text and render with styled elements
     const parts: any[] = []
     let lastIndex = 0
 
-    urls.forEach((url: string, urlIdx: number) => {
-      const urlIndex = text.indexOf(url, lastIndex)
-
-      // Add text before URL
-      if (urlIndex > lastIndex) {
+    allMatches.forEach((item, idx) => {
+      // Add text before match
+      if (item.index > lastIndex) {
         parts.push(
-          <RNText key={`text-before-${urlIdx}`}>
-            {text.substring(lastIndex, urlIndex)}
+          <RNText key={`text-before-${idx}`}>
+            {text.substring(lastIndex, item.index)}
           </RNText>
         )
       }
 
-      // Add clickable URL
-      parts.push(
-        <RNText
-          key={`url-${urlIdx}`}
-          style={{
-            color: isOwnMessage ? theme.colors.palette.accent300 : theme.colors.tint,
-            textDecorationLine: "underline",
-          }}
-          onPress={() => {
-            console.log("Plain URL pressed:", url)
-            handleURLPress(url)
-          }}
-        >
-          {url}
-        </RNText>
-      )
+      // Add styled match
+      if (item.type === 'url') {
+        parts.push(
+          <RNText
+            key={`url-${idx}`}
+            style={{
+              color: isOwnMessage ? theme.colors.palette.accent300 : theme.colors.tint,
+              textDecorationLine: "underline",
+            }}
+            onPress={() => {
+              console.log("Plain URL pressed:", item.match)
+              handleURLPress(item.match)
+            }}
+          >
+            {item.match}
+          </RNText>
+        )
+      } else if (item.type === 'mention') {
+        parts.push(
+          <RNText
+            key={`mention-${idx}`}
+            style={{
+              color: isOwnMessage ? theme.colors.palette.neutral100 : theme.colors.text,
+              fontWeight: item.isActive ? "700" : "400",
+              fontFamily: item.isActive
+                ? theme.typography.primary.bold
+                : theme.typography.primary.normal,
+              backgroundColor: item.isActive
+                ? (isOwnMessage ? "rgba(255,255,255,0.2)" : theme.colors.palette.neutral300)
+                : "transparent",
+              paddingHorizontal: item.isActive ? 4 : 0,
+              paddingVertical: item.isActive ? 2 : 0,
+              borderRadius: item.isActive ? 4 : 0,
+            }}
+          >
+            {item.match}
+          </RNText>
+        )
+      }
 
-      lastIndex = urlIndex + url.length
+      lastIndex = item.index + item.match.length
     })
 
-    // Add remaining text after last URL
+    // Add remaining text
     if (lastIndex < text.length) {
       parts.push(
         <RNText key="text-after">

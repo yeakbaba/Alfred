@@ -4,6 +4,7 @@ import { View, Text, StyleSheet } from "react-native"
 
 import { useAuth } from "@/hooks/useAuth"
 import { useContactsBadge } from "@/hooks/useContactsBadge"
+import { useNotifications } from "@/hooks/useNotifications"
 import { translate } from "@/i18n"
 import { useAppTheme } from "@/theme/context"
 
@@ -11,6 +12,9 @@ export default function TabsLayout() {
   const { isAuthenticated, isLoading } = useAuth()
   const { theme } = useAppTheme()
   const { badgeCount } = useContactsBadge()
+
+  // Initialize notifications for authenticated users
+  useNotifications()
 
   // If user is not authenticated, redirect to login
   if (!isLoading && !isAuthenticated) {

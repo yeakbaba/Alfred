@@ -18,9 +18,11 @@ import { EmptyState } from "@/components/EmptyState"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
+import { translate } from "@/i18n"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { useChats } from "@/contexts/ChatsContext"
+import { useChats, type ChatParticipant } from "@/contexts/ChatsContext"
+import { getAgentByUsername, DEFAULT_AGENT } from "@/config/agents"
 
 export default function ChatsScreen() {
   const router = useRouter()
@@ -42,63 +44,134 @@ export default function ChatsScreen() {
     chat.name.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
-  const renderChatItem = ({ item }: { item: (typeof chats)[0] }) => (
-    <Pressable
-      style={({ pressed }) => [themed($chatItem), pressed && themed($chatItemPressed)]}
-      onPress={() => router.push(`/chats/${item.id}`)}
-    >
-      <View style={themed($avatarContainer)}>
-        {item.avatar ? (
-          <Image source={{ uri: item.avatar }} style={themed($avatar)} />
-        ) : (
-          <View style={themed($avatarPlaceholder)}>
-            <Text text={item.name.charAt(0).toUpperCase()} style={themed($avatarText)} />
-          </View>
-        )}
-        {item.isOnline && <View style={themed($onlineIndicator)} />}
-        {/* Alfred badge if enabled */}
-        {item.alfredEnabled && (
-          <View style={themed($alfredBadge)}>
-            <Image
-              source={require("../../../assets/images/alfred_icon.jpg")}
-              style={themed($alfredIcon)}
-            />
-          </View>
-        )}
-      </View>
+  const renderChatItem = ({ item }: { item: (typeof chats)[0] }) => {
+    const participants = item.participants || []
 
-      <View style={themed($chatContent)}>
-        <View style={themed($chatHeader)}>
-          <Text text={item.name} style={themed($chatName)} numberOfLines={1} />
-          <Text text={item.lastMessageTime} style={themed($chatTime)} />
-        </View>
+    // Get active agent info
+    const activeAgent = item.activeAgent
+      ? getAgentByUsername(item.activeAgent) || DEFAULT_AGENT
+      : DEFAULT_AGENT
 
-        <View style={themed($chatFooter)}>
-          <Text text={item.lastMessage} style={themed($lastMessage)} numberOfLines={1} />
-          {item.unreadCount > 0 && (
-            <View style={themed($unreadBadge)}>
-              <Text
-                text={item.unreadCount > 99 ? "99+" : item.unreadCount.toString()}
-                style={themed($unreadText)}
-              />
+    // Determine display name and avatars based on participants
+    let displayName = activeAgent.username.charAt(0).toUpperCase() + activeAgent.username.slice(1)
+    let displayAvatars: ChatParticipant[] = []
+
+    if (participants.length === 0) {
+      // Only active agent
+      displayName = activeAgent.username.charAt(0).toUpperCase() + activeAgent.username.slice(1)
+      displayAvatars = []
+    } else if (participants.length === 1) {
+      // Single participant - show full name
+      displayName = participants[0].name
+      displayAvatars = [participants[0]]
+    } else if (participants.length === 2) {
+      // 2 participants - show both first names
+      displayName = participants.map(p => p.first_name || p.name).join(", ")
+      displayAvatars = participants
+    } else if (participants.length === 3) {
+      // 3 participants - show all three first names and avatars
+      displayName = participants.map(p => p.first_name || p.name).join(", ")
+      displayAvatars = participants
+    } else {
+      // 4+ participants - show first 2 avatars + "..." and first names
+      displayName = participants.map(p => p.first_name || p.name).join(", ")
+      displayAvatars = participants.slice(0, 2) // Only show first 2 avatars
+    }
+
+    return (
+      <Pressable
+        style={({ pressed }) => [themed($chatItem), pressed && themed($chatItemPressed)]}
+        onPress={() => router.push(`/chats/${item.id}`)}
+      >
+        {/* Avatar Section */}
+        <View style={themed($avatarContainer)}>
+          {displayAvatars.length === 0 ? (
+            // Only active agent - show agent avatar (no badge needed since avatar is already the agent)
+            <Image source={activeAgent.avatar} style={themed($avatar)} />
+          ) : displayAvatars.length === 1 ? (
+            // Single participant
+            <>
+              {displayAvatars[0].avatar_url ? (
+                <Image source={{ uri: displayAvatars[0].avatar_url }} style={themed($avatar)} />
+              ) : (
+                <View style={themed($avatarPlaceholder)}>
+                  <Text text={displayAvatars[0].name.charAt(0).toUpperCase()} style={themed($avatarText)} />
+                </View>
+              )}
+              {/* Active agent badge */}
+              {item.activeAgent && (
+                <View style={themed($alfredBadge)}>
+                  <Image source={activeAgent.avatar} style={themed($alfredIcon)} />
+                </View>
+              )}
+            </>
+          ) : (
+            // Multiple participants - overlapping avatars
+            <View style={themed($multipleAvatarsContainer)}>
+              {displayAvatars.map((participant, index) => (
+                <View
+                  key={participant.user_id}
+                  style={[themed($overlappingAvatar), { zIndex: displayAvatars.length - index, marginLeft: index * 25 }]}
+                >
+                  {participant.avatar_url ? (
+                    <Image source={{ uri: participant.avatar_url }} style={themed($smallAvatar)} />
+                  ) : (
+                    <View style={themed($smallAvatarPlaceholder)}>
+                      <Text text={participant.name.charAt(0).toUpperCase()} style={themed($smallAvatarText)} />
+                    </View>
+                  )}
+                </View>
+              ))}
+              {participants.length > 3 && (
+                <View style={[themed($overlappingAvatar), { zIndex: 0, marginLeft: displayAvatars.length * 25 }]}>
+                  <View style={themed($moreAvatarPlaceholder)}>
+                    <Text text="..." style={themed($moreAvatarText)} />
+                  </View>
+                </View>
+              )}
+              {/* Active agent badge */}
+              {item.activeAgent && (
+                <View style={themed($alfredBadgeMultiple)}>
+                  <Image source={activeAgent.avatar} style={themed($alfredIcon)} />
+                </View>
+              )}
             </View>
           )}
         </View>
-      </View>
-    </Pressable>
-  )
+
+        <View style={themed($chatContent)}>
+          <View style={themed($chatHeader)}>
+            <Text text={displayName} style={themed($chatName)} numberOfLines={1} />
+            <Text text={item.lastMessageTime} style={themed($chatTime)} />
+          </View>
+
+          <View style={themed($chatFooter)}>
+            <Text text={item.lastMessage} style={themed($lastMessage)} numberOfLines={1} />
+            {item.unreadCount > 0 && (
+              <View style={themed($unreadBadge)}>
+                <Text
+                  text={item.unreadCount > 99 ? "99+" : item.unreadCount.toString()}
+                  style={themed($unreadText)}
+                />
+              </View>
+            )}
+          </View>
+        </View>
+      </Pressable>
+    )
+  }
 
   return (
     <Screen preset="fixed" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
       <View style={themed($header)}>
-        <Text text="Chats" preset="heading" />
-        <Button text="New" preset="default" onPress={() => router.push("/chats/new")} />
+        <Text tx="chats:title" preset="heading" />
+        <Button tx="chats:new.new" preset="default" onPress={() => router.push("/chats/new")} />
       </View>
 
       <TextField
         value={searchQuery}
         onChangeText={setSearchQuery}
-        placeholder="Search chats..."
+        placeholder={translate("chats:search")}
         containerStyle={themed($searchField)}
         LeftAccessory={() => (
           <MaterialCommunityIcons
@@ -118,9 +191,9 @@ export default function ChatsScreen() {
         <View style={themed($emptyState)}>
           <EmptyState
             preset="generic"
-            heading="No chats yet"
-            content="Start a conversation by creating a new chat"
-            button="New Chat"
+            heading={translate("chats:emptyState")}
+            content={translate("chats:emptyStateSubtitle")}
+            button={translate("chats:newChat")}
             buttonOnPress={() => router.push("/chats/new")}
           />
         </View>
@@ -229,6 +302,59 @@ const $onlineIndicator: ThemedStyle<ViewStyle> = ({ colors }) => ({
   borderColor: colors.background,
 })
 
+const $multipleAvatarsContainer: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  alignItems: "center",
+  height: 50,
+  minWidth: 80,
+})
+
+const $overlappingAvatar: ThemedStyle<ViewStyle> = () => ({
+  position: "absolute",
+})
+
+const $smallAvatar: ThemedStyle<ImageStyle> = ({ colors }) => ({
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  borderWidth: 2,
+  borderColor: colors.background,
+})
+
+const $smallAvatarPlaceholder: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: colors.tint,
+  justifyContent: "center",
+  alignItems: "center",
+  borderWidth: 2,
+  borderColor: colors.background,
+})
+
+const $smallAvatarText: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.background,
+  fontSize: 14,
+  fontWeight: "bold",
+})
+
+const $moreAvatarPlaceholder: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: colors.palette.neutral400,
+  justifyContent: "center",
+  alignItems: "center",
+  borderWidth: 2,
+  borderColor: colors.background,
+})
+
+const $moreAvatarText: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.background,
+  fontSize: 16,
+  fontWeight: "bold",
+})
+
 const $alfredBadge: ThemedStyle<ViewStyle> = ({ colors }) => ({
   position: "absolute",
   top: -4,
@@ -240,6 +366,20 @@ const $alfredBadge: ThemedStyle<ViewStyle> = ({ colors }) => ({
   borderWidth: 2,
   borderColor: colors.tint,
   overflow: "hidden",
+})
+
+const $alfredBadgeMultiple: ThemedStyle<ViewStyle> = ({ colors }) => ({
+  position: "absolute",
+  top: -4,
+  right: -4,
+  width: 24,
+  height: 24,
+  borderRadius: 12,
+  backgroundColor: colors.background,
+  borderWidth: 2,
+  borderColor: colors.tint,
+  overflow: "hidden",
+  zIndex: 100,
 })
 
 const $alfredIcon: ThemedStyle<ImageStyle> = () => ({

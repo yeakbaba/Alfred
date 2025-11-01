@@ -22,30 +22,34 @@ import { useAuth } from "@/hooks/useAuth"
 import { translate } from "@/i18n"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { fetchFromTable, insertIntoTable, insertMultipleIntoTable } from "@/services/supabase"
+import { fetchFromTable, insertIntoTable, insertMultipleIntoTable, executeQuery } from "@/services/supabase"
+import { AGENTS_LIST, type Agent } from "@/config/agents"
 
-// Butler is a special system contact
-const BUTLER: Contact = {
-  id: "system-butler",
-  name: "Alfred",
-  username: "alfred",
-  avatar: undefined,
+// AI Agents are special system contacts
+const AI_AGENTS: Contact[] = AGENTS_LIST.map((agent) => ({
+  id: `system-${agent.username}`,
+  name: agent.username.charAt(0).toUpperCase() + agent.username.slice(1),
+  username: agent.username,
+  avatar: agent.avatar,
+  description: agent.description, // e.g., "Home & Family Planner"
   isOnline: true,
   isSystem: true,
-  type: "butler",
-}
+  type: "butler" as const,
+}))
 
 interface Contact {
   id: string
   name: string
   username: string
-  avatar?: string
+  avatar?: string | any // Can be URL string or require() object for agents
+  description?: string // For AI agents: their role/task
   email?: string
   phone?: string
   isOnline?: boolean
   isSystem?: boolean
   type?: "user" | "butler"
   isConnection?: boolean
+  lastInteractionAt?: string
 }
 
 interface GroupedContacts {
@@ -65,7 +69,7 @@ export default function NewChatScreen() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreatingChat, setIsCreatingChat] = useState(false)
   const [groupedContacts, setGroupedContacts] = useState<GroupedContacts>({
-    butler: [BUTLER],
+    butler: AI_AGENTS,
     connections: [],
     others: [],
   })
@@ -76,11 +80,13 @@ export default function NewChatScreen() {
       try {
         if (!user?.id) return
 
-        // Fetch user's connections
-        const { data: connections, error: connError } = await fetchFromTable(
-          "user_connections",
-          "*",
-          { user_id: user.id },
+        // Fetch user's connections with last_interaction_at, sorted descending
+        const { data: connections, error: connError } = await executeQuery<any[]>((client) =>
+          client
+            .from("user_connections")
+            .select("*")
+            .eq("user_id", user.id)
+            .order("last_interaction_at", { ascending: false })
         )
 
         if (connError) throw connError
@@ -88,35 +94,52 @@ export default function NewChatScreen() {
         // Get connected user IDs
         const connectedUserIds = connections?.map((c: any) => c.connected_user_id) || []
 
-        // Fetch all profiles (you can optimize with search later)
-        const { data: profiles, error: profileError } = await fetchFromTable("profiles", "*")
+        if (connectedUserIds.length === 0) {
+          setAllContacts([])
+          setGroupedContacts({
+            butler: AI_AGENTS,
+            connections: [],
+            others: [],
+          })
+          return
+        }
+
+        // Fetch profiles for connected users
+        const { data: profiles, error: profileError } = await executeQuery<any[]>((client) =>
+          client
+            .from("profiles")
+            .select("*")
+            .in("id", connectedUserIds)
+        )
 
         if (profileError) throw profileError
 
-        // Separate into connections and others
-        const contactsList = (profiles || [])
-          .filter((p: any) => p.id !== user.id) // Exclude self
-          .map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            username: p.username,
-            avatar: p.avatar_url,
-            email: p.email,
-            phone: p.phone,
-            isConnection: connectedUserIds.includes(p.id),
-            type: "user" as const,
-          }))
+        // Map connections to contacts with profile data
+        const connectionContacts: Contact[] = (connections || [])
+          .map((c: any) => {
+            const profile = profiles?.find((p: any) => p.id === c.connected_user_id)
+            if (!profile) return null
 
-        setAllContacts(contactsList)
+            return {
+              id: c.connected_user_id,
+              name: profile.name,
+              username: profile.username,
+              avatar: profile.avatar_url,
+              email: profile.email,
+              phone: profile.phone,
+              isConnection: true,
+              type: "user" as const,
+              lastInteractionAt: c.last_interaction_at,
+            }
+          })
+          .filter((c): c is Contact => c !== null) // Remove nulls
 
-        // Group contacts
-        const connectionContacts = contactsList.filter((c) => c.isConnection)
-        const otherContacts = contactsList.filter((c) => !c.isConnection)
+        setAllContacts(connectionContacts)
 
         setGroupedContacts({
-          butler: [BUTLER],
+          butler: AI_AGENTS,
           connections: connectionContacts,
-          others: otherContacts,
+          others: [], // No longer showing other users
         })
       } catch (error) {
         console.error("Error loading contacts:", error)
@@ -129,18 +152,18 @@ export default function NewChatScreen() {
     loadContacts()
   }, [user?.id])
 
-  // Filter contacts based on search
+  // Filter contacts based on search - only AI agents and connections
   const getFilteredContacts = useCallback(() => {
     if (!searchQuery.trim()) {
-      // No search: show butler + connections only
+      // No search: show AI agents + connections
       return {
         butler: groupedContacts.butler,
         connections: groupedContacts.connections,
-        others: [], // Don't show other users unless searching
+        others: [], // Never show others
       }
     }
 
-    // With search: show all groups including filtered others
+    // With search: only filter AI agents and connections (no others)
     const query = searchQuery.toLowerCase()
     const filterContacts = (contacts: Contact[]) =>
       contacts.filter(
@@ -154,7 +177,7 @@ export default function NewChatScreen() {
     return {
       butler: filterContacts(groupedContacts.butler),
       connections: filterContacts(groupedContacts.connections),
-      others: filterContacts(groupedContacts.others),
+      others: [], // Never show others
     }
   }, [searchQuery, groupedContacts])
 
@@ -202,8 +225,12 @@ export default function NewChatScreen() {
 
       // Determine if this is a group chat or DM
       const userContacts = selectedContacts.filter((c) => c.type === "user")
-      const hasButler = selectedContacts.some((c) => c.type === "butler")
-      const isGroupChat = userContacts.length > 1 || (userContacts.length === 1 && hasButler)
+      const agentContacts = selectedContacts.filter((c) => c.type === "butler")
+      const hasAgents = agentContacts.length > 0
+      const isGroupChat = userContacts.length > 1 || (userContacts.length === 1 && hasAgents)
+
+      // Determine active agent: first selected agent's username, or null if none
+      const activeAgent = agentContacts.length > 0 ? agentContacts[0].username : null
 
       // Check for non-connection user
       const nonConnectionUser = userContacts.find((c) => !c.isConnection)
@@ -236,9 +263,10 @@ export default function NewChatScreen() {
       const chatData = {
         type: isGroupChat ? "group" : "dm",
         created_by: user.id,
-        participant_count: userContacts.length + (hasButler ? 1 : 0) + 1, // +1 for current user
+        participant_count: userContacts.length + (hasAgents ? 1 : 0) + 1, // +1 for current user
         name: isGroupChat ? userContacts.map((c) => c.name).join(", ") : userContacts[0]?.name,
-        alfred_enabled: hasButler,
+        alfred_enabled: hasAgents, // Keep for backwards compatibility
+        active_agent: activeAgent, // Set first selected agent as active
         message_count: 0,
       }
 
@@ -341,7 +369,10 @@ export default function NewChatScreen() {
 
         <View style={themed($avatarContainer)}>
           {item.avatar ? (
-            <Image source={{ uri: item.avatar }} style={themed($avatar)} />
+            <Image
+              source={typeof item.avatar === 'string' ? { uri: item.avatar } : item.avatar}
+              style={themed($avatar)}
+            />
           ) : (
             <View style={themed($avatarPlaceholder)}>
               <Text text={item.name.charAt(0).toUpperCase()} style={themed($avatarText)} />
@@ -353,7 +384,7 @@ export default function NewChatScreen() {
         <View style={themed($contactContent)}>
           <Text text={item.name} style={themed($contactName)} numberOfLines={1} />
           <Text
-            text={item.isSystem ? "AI Butler" : `@${item.username}`}
+            text={item.isSystem && item.description ? translate(item.description) : item.isSystem ? "AI Agent" : `@${item.username}`}
             style={themed($contactUsername)}
             numberOfLines={1}
           />
